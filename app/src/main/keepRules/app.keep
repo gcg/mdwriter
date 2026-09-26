@@ -1,0 +1,5 @@
+# Strip verbose/debug logging from release builds (dev.mdwriter.util.Log is also gated on BuildConfig.DEBUG).
+-assumenosideeffects class android.util.Log {
+    public static int v(...);
+    public static int d(...);
+}

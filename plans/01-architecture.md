@@ -60,7 +60,7 @@ app/src/main/kotlin/dev/mdwriter/
                           via Builder(StrictMode.getVmPolicy()), never replaces it)
   AppContainer.kt         manual DI graph (see §5)
   MainActivity.kt         ComponentActivity: edge-to-edge, setContent, intents, activity-level key shortcuts
-  util/                   Log.kt (debug-gated), Dispatchers.kt, PerfLog.kt + StrictModeUtil.kt [T20], PerfStats.kt [T21]
+  util/                   Log.kt (debug-gated), AppDispatchers.kt, PerfLog.kt + StrictModeUtil.kt [T20], PerfStats.kt [T21]
   debug/ (src/main, dev.mdwriter.debug, BuildConfig.DEBUG-gated) SampleDocs, FrameWorkLogger [T05];
                           src/debug: EditorPerfActivity + debug manifest [T07]
   editor/                 THE EDITOR ENGINE (Android View layer, no Compose inside)
