@@ -12,6 +12,7 @@ import dev.mdwriter.debug.FrameWorkLogger
 import dev.mdwriter.debug.SampleDocs
 import dev.mdwriter.editor.EditorController
 import dev.mdwriter.editor.InstallRequest
+import dev.mdwriter.editor.MdEditableFactory
 import dev.mdwriter.editor.spans.EditorStyle
 import dev.mdwriter.editor.spans.toEditorColors
 import dev.mdwriter.ui.editor.EditorHost
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
     @Composable
     private fun EditorDemo() {
         val colors = WriterTheme.colors
+        if (BuildConfig.DEBUG) MdEditableFactory.enabled = intent.getBooleanExtra("mdEditable", true)
         val controller = remember { EditorController(this, EditorStyle.create(this, colors)) }
         val frameLogger =
             remember {

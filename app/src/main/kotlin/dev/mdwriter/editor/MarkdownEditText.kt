@@ -6,7 +6,9 @@ import android.content.Context
 import android.graphics.text.LineBreaker
 import android.text.InputType
 import android.text.Layout
+import android.text.Spanned
 import android.text.TextUtils
+import android.text.style.UpdateLayout
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -26,7 +28,14 @@ class MarkdownEditText(
 ) : EditText(context, null, 0, R.style.Widget_MdWriter_Editor) {
     val caret = CaretDrawable(dp(2), dp(1).toFloat())
 
+    /** Toggled between `[0,0]` and `[0,len]` by [reflowAll]; a plain marker, never read for its own sake. */
+    private val reflowTrigger = object : UpdateLayout {}
+    private var triggerWide = false
+
     init {
+        // Must run before any setText (incl. the super constructor's own EMPTY text): the FIRST document must
+        // already be an MdEditable, or it starts as a plain SpannableStringBuilder with 162 ms keystrokes later.
+        setEditableFactory(MdEditableFactory)
         isSaveEnabled = false // 01 §8: text lives on disk, never in the Bundle
         id = View.NO_ID // rule 8
         gravity = Gravity.TOP or Gravity.START
@@ -83,6 +92,21 @@ class MarkdownEditText(
                 super.onTextContextMenuItem(id)
             }
         }
+
+    /**
+     * Forces one full reflow (colours/typeface/size change: spans read [dev.mdwriter.editor.spans.EditorStyle]
+     * live, so no span object needs replacing — see `plans/tasks/T06-styling-spans.md` Reference §E).
+     * `DynamicLayout.onSpanChanged` reflows both the OLD and the NEW range of an `UpdateLayout` span
+     * (factcheck A13), and `SpannableStringBuilder.setSpan` on an attached span always broadcasts even with
+     * unchanged bounds, so toggling one permanent trigger span between `[0,0]` and `[0,len]` costs one full +
+     * one empty reflow — cheaper than a set/remove pair (two full reflows).
+     */
+    fun reflowAll() {
+        val e = text ?: return
+        triggerWide = !triggerWide
+        e.setSpan(reflowTrigger, 0, if (triggerWide) e.length else 0, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        invalidate()
+    }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).roundToInt()
 }

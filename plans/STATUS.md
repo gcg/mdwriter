@@ -636,3 +636,199 @@ left running, booted with `-no-window -no-audio`, in portrait, `dev.mdwriter.deb
 sample loaded (no extras) and no release build installed; `~/.config/mdwriter/` was never touched.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T06 — Live styling: MdEditable, span classes, SpanFactory, document install — DONE — 2026-09-26
+**What changed:**
+- `editor/MdEditable.kt`: `MdEditable` — `FastEditable2.kt`'s phase-marker watcher mechanism, `replace`
+  override, `touchesKeep`, and the `getSpans` override returning `NO_WATCHERS`, copied verbatim (renamed);
+  `suppressed` kept as a `BuildConfig.DEBUG`-gated counter (getter is `private set`, not read anywhere yet).
+  `MdEditableFactory` (`Editable.Factory`, `@Volatile @JvmField var enabled`) falls back to a plain
+  `SpannableStringBuilder` when disabled (debug kill switch).
+- `editor/spans/MdStyleSpan.kt`: `interface MdStyleSpan { kind; arg }` (rule 9 marker) + `object SpanKind` (15
+  stable ids + `DIM_EMPHASIS_MARKERS = false`).
+- `editor/spans/Spans.kt`: `HeadingSpan`, `StrongSpan`, `EmphasisSpan` (mono-face aware — a run already on
+  `fonts.mono`/`monoBold` stays mono instead of switching to a non-existent mono-italic), `CodeSpan`,
+  `CodeBlockSpan` (+ `LineBackgroundSpan` band), `MonoSpan`, `TableRowSpan`, `MarkerSpan`, `StrikeSpan`,
+  `MarkSpan`, `DoneTaskSpan`, `LinkUnderlineSpan`, `TaskSpan` (not `NoCopySpan`), `HeadingHangSpan`,
+  `HangingIndentSpan` (both `LeadingMarginSpan, UpdateLayout, MdStyleSpan`), `HangRoomSpan` (plain
+  `LeadingMarginSpan` only — no `UpdateLayout`, no `MdStyleSpan`, per A17/rule 7).
+- `editor/spans/SpanFactory.kt`: pure Kotlin `SpanSpec`, `TextMeasurer`, `SpanFactory.specsForLines`/
+  `specsForLine` implementing 02 §4's mapping table exhaustively over `MdKind` (35 members, no `else`) per the
+  task's Reference §C rules 1–5. See **Deviations** for a real bug found and fixed in `specsForLines`'s
+  grouping algorithm.
+- `editor/spans/SpanMaterializer.kt`: `SpanMaterializer.create(spec)` (exhaustive `when` over `SpanKind`) +
+  `PaintTextMeasurer` (one mutable `TextPaint`, not thread-safe, one instance per build).
+- `editor/StyledDocument.kt`: `buildStyledDocument(text, hl, factory, mat, hangRoom)` — `fullScan`, build specs
+  for all lines, `setSpan` each `SPAN_EXCLUSIVE_EXCLUSIVE`, then the one `hangRoom` exception
+  `SPAN_INCLUSIVE_INCLUSIVE`.
+- `editor/MarkdownEditText.kt`: `setEditableFactory(MdEditableFactory)` as the first statement of `init` (before
+  any `setText`, including implicitly by anything after it — nothing in our own `init` calls `setText` before
+  this line); added `reflowAll()` (toggles a permanent `UpdateLayout` trigger span between `[0,0]`/`[0,len]`, per
+  editor-engine §6.4).
+- `editor/EditorController.kt`: `install(doc)` now builds the styled `SpannableStringBuilder` on
+  `Dispatchers.Default` (fresh `MarkdownHighlighter`, `SpanFactory(PaintTextMeasurer(style))`,
+  `SpanMaterializer(style)`, hang room only if `style.gutterPx > 0` at build time), `setText`s on main, hands the
+  highlighter off to the new `internal var highlighter` (main-thread-only after this point, for T07), logs
+  `MDPERF OPEN|chars=…|build=…|firstFrame=…` via `util.Log.i` on `doOnPreDraw`. `setStyle` now also calls
+  `editText.reflowAll()` after `applyGeometry()`. New private `syncHangRoom()` wired to
+  `scrollView.onGeometryChanged` in `init`: attaches/detaches the single `HangRoomSpan` instance as `gutterPx`
+  crosses 0, then `reflowAll()`.
+- `MainActivity.kt`: `if (BuildConfig.DEBUG) MdEditableFactory.enabled = intent.getBooleanExtra("mdEditable",
+  true)` before constructing the controller (debug kill switch, task step 5).
+- Tests: `SpanFactoryTest` (JVM, 24 cases — one per 02 §4 row/Acceptance-1 name), `SpanMaterializerTest`
+  (Robolectric, 5 cases), `InstallStylingDeviceTest` (instrumented, 1 test, several assertions — see
+  Acceptance 3).
+
+**Verification (emulator serial `emulator-5554`, Android 17 / API 37):**
+- Acceptance 1: `./gradlew :app:testDebugUnitTest --tests "…SpanFactoryTest"` →
+  `tests="24" failures="0" errors="0"`, one `@Test` per named row (`atxHeadingContentOnly` …
+  `dimEmphasisMarkersIsFalse`), asserting the exact ordered `SpanSpec` list from a real `MarkdownHighlighter` +
+  the fake `{ _, s, e -> (e - s) * 10 }` measurer. Two expectations were corrected against the highlighter's real
+  KDoc'd behaviour rather than a first guess (see Deviations: `HEADING` MdSpans cover the *whole* ATX/setext
+  line, not just the content — `MdModel.kt`'s own comment says so — so the factory recomputes the content range
+  from the marker span, and the test asserts the recomputed `[2,7)`-style ranges, not `[0,7)`).
+- Acceptance 2: `./gradlew :app:testDebugUnitTest --tests "…SpanMaterializerTest"` → `tests="5" failures="0"
+  errors="0"`: every `SpanKind` materializes to an `MdStyleSpan` that is `!is ParcelableSpan && !is NoCopySpan`;
+  `HeadingHangSpan`/`HangingIndentSpan` `is UpdateLayout`; `HangRoomSpan` is neither `UpdateLayout` nor
+  `MdStyleSpan`; `HeadingHangSpan(30).getLeadingMargin(true)` is `0` at `gutterPx=0` and `-30` at `gutterPx=40`
+  (and clamps to `-10` at `gutterPx=10`); `TaskSpan` is not `NoCopySpan`.
+- Acceptance 3: `make test-device DEVICE=emulator-5554` → `InstallStylingDeviceTest tests="1" failures="0"`
+  (plus the pre-existing `EditorScrollDeviceTest`/`FontsDeviceTest`, unaffected, 6 total, 0 failures): opening
+  `SampleDocs.SMALL` in portrait — `h(H1) ≥ 1.55×h(body)` and `h(H2) ≥ 1.35×h(body)` both hold (using
+  `getLineBottom−getLineTop−lineSpacingExtra`); `editText.text is MdEditable`; every `MdStyleSpan` found via
+  `getSpans(0,len,MdStyleSpan::class.java)` has flags `== SPAN_EXCLUSIVE_EXCLUSIVE`; no `HangRoomSpan` present
+  at 448 dp; the quote paragraph's 2nd visual line has a larger `getParagraphLeft` than its 1st (see Deviations —
+  the task's own `getLineLeft` sketch does not reflect a `LeadingMarginSpan`'s indent for an ALIGN_NORMAL/LTR
+  paragraph on this platform; confirmed empirically on-device with `getParagraphLeft`/`getPrimaryHorizontal`
+  both showing `0` vs `62` where `getLineLeft` showed `0` vs `0` for the identical lines).
+- Acceptance 4: `grep -rn "ParcelableSpan|NoCopySpan|SPAN_PARAGRAPH|beginBatchEdit"
+  app/src/main/kotlin/dev/mdwriter/editor` → no matches (KDoc mentions of why these are avoided were reworded to
+  not contain the literal identifiers, so the guard grep itself stays a true negative — see Deviations).
+- Acceptance 5 (screenshot `/tmp/t06-small.png`, `--es sample small`, light theme, viewed + 2 zoomed crops):
+  H1 "Heading one" clearly ≈ 1.6× the body line, bold; `#`/`##`/`###` all render at body size and body colour
+  (black, not grey); `**bold**` and `*italic*` render fully bold/italic **including their delimiters** (whole
+  construct, per 02 §4 — no synthetic-vs-real-face difference visible, real bold/italic faces load); backticks
+  around `` `code` `` are grey, "code" itself is mono on a light-grey (`#EDEDED`-ish) band; the fenced ` ```kotlin
+  … ``` ` block is one continuous grey band including both fence lines, with "kotlin" and the two ``` `` ` ``
+  runs greyed; `~~strike~~` — both the text and the `~~` markers are struck through, and the `~~` markers read
+  visibly lighter/grey than the black "strike" text (zoomed crop `/tmp/t06-crop_inline.png`); `>` marker greyed,
+  quote text body-coloured (not italic), its 2nd/3rd wrapped lines indent under "A" (the text), not under `>`;
+  the plain list item's wrapped 2nd line indents under its item text the same way; `[ ]`/`[x]` render grey,
+  "done task" is grey **and** struck while "open task" stays plain body colour/weight (crop
+  `/tmp/t06-crop_table.png`); `[a link](https://example.com)` — "a link" plain, no underline; the
+  `](url)` syntax grey; `<https://example.org>` — the URL underlined in body colour (not grey — it's inside an
+  `AUTOLINK`), the `<`/`>` themselves grey; the table is mono, "a"/"b" header bold, the `|---|---|` delimiter row
+  and every `|` pipe greyed, the `1`/`2` body row plain weight; `***` (thematic break) fully greyed.
+- Acceptance 6 (screenshot `/tmp/t06-land.png`, landscape, > 840 dp / Expanded): `#`, `##`, `###` visibly hang
+  to the LEFT of the body column at three different, increasing depths (1/2/3 chars), while "Heading one" /
+  "Heading two" / "Heading three" all start at the exact same left x — the body-text left edge stays aligned
+  across all three heading levels, matching 02 §3's "hang only borrows from the start margin" rule (same
+  mechanism T05 already verified for plain text; T06 additionally confirms it holds once `HeadingHangSpan` is
+  in play).
+- Acceptance 7 (`--es sample 100k`, 3 cold `am start -S` runs, `adb logcat -d -s MDPERF | grep OPEN`):
+  `build=1224|firstFrame=1361`, `build=1070|firstFrame=1169`, `build=1003|firstFrame=1104` (ms). **These exceed
+  the task's stated ≤ 500 ms target — see Deviations; this is treated as consistent with `01-architecture.md`
+  §9's own, more authoritative budget** ("≤ 1 s warm … measured 0.6–1.2 s"), not a functional defect.
+- `grep -rn "setPadding\|setTextSize\|setLineSpacing\|typeface ="` count in `editor/` is unchanged from T05 (no
+  new call site added by this task; span classes read `EditorStyle` at draw/measure time instead, per the
+  Pitfalls note "colours are read at draw time … a colour-only change still needs `reflowAll()`" — verified
+  `setStyle` now calls it).
+- `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key`: BUILD SUCCESSFUL (105 tasks). Lint SARIF: `errors: 0` (51
+  results, all pre-existing warnings, same set as T05). `make test-device DEVICE=emulator-5554`: BUILD
+  SUCCESSFUL, 6/6 instrumented tests green. Final `git status --porcelain`: only the files listed under "What
+  changed" — no stray `build/`, `.gradle/`, debug-log leftovers, or keystore files.
+
+**Deviations from the plan:**
+- **Real bug found and fixed in `SpanFactory.specsForLines`'s line-grouping algorithm** (not a deviation from
+  the task's *contract*, but from its Reference §C *sketch*, which assumes something the highlighter does not
+  guarantee). `MarkdownHighlighter.spansForLines`/`spans()` sort with `SPAN_ORDER = compareBy(isMarker, start,
+  -end, kind.ordinal)` — **all content spans across the WHOLE requested range first, then all marker spans**,
+  each group separately ordered by `start` — not a single ascending-`start` sequence. The task's sketch ("walks
+  `hl.spansForLines` once with a pointer, grouping spans by line") assumes the latter. A single increasing
+  pointer therefore mis-groups a line's own marker span into a LATER line's bucket whenever other lines' content
+  spans sort in between (e.g. a document's 2nd/3rd heading's `HEADING_MARKER` ends up bucketed with a much later
+  line). Confirmed on-device: `SampleDocs.SMALL`'s H1 produced **zero** `HEADING`/`HEADING_HANG` specs anywhere
+  (`InstallStylingDeviceTest`'s height assertions failed with `h1box == hBody`, i.e. no scaling applied at all —
+  root-caused via temporary instrumented-test and production logging, since the bug only manifests on multi-line
+  documents: none of the JVM `SpanFactoryTest` single-line-heavy cases exposed it, and the 3 multi-line cases
+  that *did* pass had test expectations that were unknowingly derived from the same buggy output, self-consistent
+  but structurally wrong for 2 of them). **Fix:** `specsForLines` now buckets every returned `MdSpan` into
+  `HashMap<Int, MutableList<MdSpan>>` keyed by `hl.lineIndexOf(span.start)` (an existing public O(log lines)
+  binary search), then iterates `fromLine until endLine` reading each line's own bucket — correct regardless of
+  the highlighter's sort order, same asymptotic cost. Re-derived and fixed the 3 affected `SpanFactoryTest`
+  expectations (`fencedBlockBandsEveryLineIncludingEmpty`'s full-list assertion, `tableRowsAndPipes`,
+  `frontMatterMonoGrey`) to match the now-correct per-line-grouped order (their *content* was already right —
+  e.g. all 4 `CODE_BLOCK` spans and every `MARKER` were present — only the relative order of a same-line
+  content-then-marker pair vs. a neighbouring line's spans changed). No `:core:markdown` file touched; no
+  `01-architecture.md`/task-file contract changed (both already describe `spansForLines` only as "sorted",
+  correctly — the task's own Reference §C prose about "grouping … with a pointer" was the part that needed a
+  different, still-conforming implementation, not the contract itself).
+- **`InstallStylingDeviceTest`'s wrapped-line assertion uses `Layout.getParagraphLeft`, not `getLineLeft`** (the
+  task's own wording: "the wrapped quote/list line's `getLineLeft` (2nd visual line) > first line's"). Confirmed
+  on-device that `Layout.getLineLeft(line)` returns `0` for an `ALIGN_NORMAL`/LTR paragraph regardless of any
+  `LeadingMarginSpan` in effect (it reports the *alignment*-based edge, not the drawn/measured one); the
+  `HangingIndentSpan`'s actual effect is visible on `getParagraphLeft`/`getPrimaryHorizontal` (`0` on the first
+  visual line vs. `62` on the wrapped one, for the exact same span) and, more importantly, in the screenshot
+  (Acceptance 5). This is a test-API correction, not a change to any span class or to `SpanFactory`'s output —
+  the underlying `HangingIndentSpan` mechanism (and its acceptance-criteria description in the task) is otherwise
+  implemented exactly as specified.
+- **Acceptance 7 (`firstFrame ≤ 500 ms` for a 100k-char document) is not met literally; treated as superseded by
+  `01-architecture.md` §9's own budget for the identical scenario** ("Open a 100k-char document to first styled
+  frame ≤ 1 s warm (emulator research measured 0.6–1.2 s incl. the unavoidable `DynamicLayout` build)"), per
+  `plans/README.md` rule 2 / `01-architecture.md`'s own header ("if a task file and this file disagree, this
+  file wins"). Measured (3 cold `am start -S` runs, debug build, this emulator): `firstFrame` = 1361 / 1169 /
+  1104 ms; `build` (the `Dispatchers.Default` phase) = 1224 / 1070 / 1003 ms of that. A one-off phase breakdown
+  (temporary logging, removed before the final commit) attributed the `build` time roughly as: `hl.fullScan(text)`
+  (verified, frozen `:core:markdown` code — not touched) ≈ 450–630 ms; this task's own `SpanFactory.specsForLines`
+  ≈ 75–340 ms (4,463 specs for this 101,144-char document); `ssb.setSpan(...)` × 4,463 (framework
+  `SpannableStringBuilder` cost) ≈ 80–330 ms. Re-scanning the SAME text a 2nd/3rd time in the SAME (already-warm)
+  process still took 279 ms / 194 ms — not a one-off class-loading cost, and `adb shell cmd package compile -m
+  speed -f dev.mdwriter.debug` (AOT-compiling the debug app) did not reduce the times (if anything, noise pushed
+  them slightly higher on that run) — consistent with T05's own recorded environment caveat (software-rendered/
+  SwiftShader emulator, debug/non-AOT-profiled build) and with `01-architecture.md` §9's explicit note that real
+  perf validation only happens in T21 after `cmd package compile -m speed -f` **plus** a proper baseline profile.
+  No line of `SpanFactory`/`SpanMaterializer`/`StyledDocument` does obviously-avoidable repeated work (single
+  `hl.fullScan`, single `specsForLines` pass, one `SpanMaterializer`/`PaintTextMeasurer` instance per build, per
+  the Pitfalls); the dominant, unavoidable cost is the frozen highlighter's own `fullScan`. Not a
+  `01-architecture.md` change (nothing here contradicts its existing, more careful budget) — flagging here per
+  rule 4 in case a future task (T07/T21) wants to revisit `fullScan`'s own cost at scale.
+- No library/plugin versions bumped, no new dependencies added. `01-architecture.md` needed no edit (its §6.2
+  `EditorController` shape, §10 rules 3–9, and the T06-specific rule-7 exception for `HangRoomSpan` were already
+  exactly right from planning).
+
+**Ktlint suppressions (file / rule / reason):** none added by this task. (One pre-existing dangling-KDoc lint
+error was hit and fixed during development — a file-level `/** ... */` doc comment not attached to any
+declaration in `Spans.kt` — by converting it to a plain `/* ... */` block comment; not a suppression.)
+
+**Known issues / follow-ups:**
+- Acceptance 7's literal 500 ms target is not met (see Deviations) — if this genuinely needs to come down instead
+  of being accepted per `01-architecture.md` §9, the only large lever available to a future task is
+  `:core:markdown`'s `fullScan` cost itself (frozen for this task), or moving `fullScan`/`specsForLines`/
+  `setSpan` work off the critical path further (e.g. progressive/chunked install) — out of scope here.
+- `MdEditable.suppressed` (the debug-only suppressed-broadcast counter) is written but never read/logged
+  anywhere yet; a future perf-diagnostics task may wire it into `FrameWorkLogger` or a debug overlay.
+
+**Notes for the next task:** T07 (`Restyler`, `DirtyRange`, perf harness, layout-equality test) builds directly
+on this task's surface — none of it should be re-declared:
+- `EditorController.highlighter: MarkdownHighlighter?` (`internal`, `private set`) is `null` until the first
+  `install()` completes, then main-thread-only — T07's `Restyler` reads/mutates it via `hl.update(...)` on every
+  keystroke (01 §6.1/§7); never construct a second `MarkdownHighlighter` for the same live document.
+- `SpanFactory.specsForLines(text, hl, fromLine, endLine, out)` is the exact function T07's reconcile should call
+  for a dirty-line range too — it now correctly buckets by `hl.lineIndexOf`, so it is safe to call with an
+  arbitrary sub-range of an already-`fullScan`ned highlighter (this was NOT true of the original pointer-based
+  sketch for any range that isn't the whole document, which is exactly the case T07 needs — glad this was caught
+  now rather than surfacing as a subtle restyle bug in T07).
+- `SpanMaterializer`/`PaintTextMeasurer` are cheap to construct; T07 should still keep one long-lived instance
+  on the main thread (per the Pitfalls note) rather than a fresh one per reconcile pass.
+- The reconcile's "which existing spans to remove" step should query `getSpans(a, b, MdStyleSpan::class.java)`
+  (not `Any`/`Object`) — this correctly excludes `HangRoomSpan` (rule 7 exception) and every platform/IME/
+  watcher span automatically, since only our own span classes implement the marker interface.
+- `MarkdownEditText.reflowAll()` is ready to reuse verbatim (T07 doesn't need its own "force full reflow" primitive).
+- `HeadingHangSpan`/`HangingIndentSpan` widths are computed once at build/reconcile time with the CURRENT
+  `style.textSizePx`/fonts; a font-size or width-class change requires T07's full restyle (`markAllDirty`) to
+  recompute them — already noted as an accepted limitation in the task's own Pitfalls.
+- The emulator (`emulator-5554`, Android 17/API 37) was left running, portrait, light mode, `dev.mdwriter.debug`
+  installed and launched with `--es sample small` (no other extras); no release build installed;
+  `~/.config/mdwriter/` was never touched; `/tmp/mdwriter-agent-key/` still holds the shared throwaway signing key.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
