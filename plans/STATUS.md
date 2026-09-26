@@ -1506,3 +1506,131 @@ keycombination KEYCODE_CTRL_LEFT KEYCODE_Z`):**
   touched; `/tmp/mdwriter-agent-key/` still holds the shared throwaway signing key.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T10 — Storage layer: InternalStore, AtomicWriter, TextCodec, RecoveryStore — DONE — 2026-09-26
+**What changed:**
+- `data/library/Location.kt` (§A, copy verbatim): `LocationId`, `DocRef` (`InternalFile`/`TreeDoc`/`External`),
+  `FolderRef` (+ `INTERNAL_ROOT`), `DocKey`, `DocRef.key()`/`DocKey.toRef()`, `DocRef.location`,
+  `DocRef.InternalFile.fileName`/`.parentPath`, `FolderRef.childPath`.
+- `data/library/LibraryEntry.kt` (§B): `EntryCaps` (+ `ALL`), `LibraryEntry` with the `caps` field.
+- `data/storage/DocumentStore.kt` + `StorageError.kt` (§C): `FileStat`, `TrashToken`, `interface DocumentStore`
+  (including the `displayName(ref)` addition), `StorageError` sealed interface, `StorageException`,
+  `StorageError.userMessage()`.
+- `data/storage/Hashes.kt`: `sha1Hex(ByteArray)` / `sha1Hex(String)` (UTF-8 bytes), lowercase hex.
+- `data/storage/AtomicWriter.kt` (§D, copy verbatim): `KeyedMutex`, `AtomicWriter` (dot-prefixed same-dir temp
+  file, `fd.sync()` before `ATOMIC_MOVE`+`REPLACE_EXISTING`, best-effort directory fsync).
+- `data/storage/TextCodec.kt` (§E, copy verbatim): `LineEnding`, `TextFormat`, `DecodeResult`, `TextCodec`
+  (BOM/NUL-sniff/UTF-8-with-1252-fallback decode, dominant-line-ending detection, LF-normalizing encode).
+- `data/storage/NoteFiles.kt` (§F, bodies filled in): `StorageLimits`, `NoteFiles` (`extensionOf`/`baseName`
+  via a shared `splitNameRaw` helper that preserves the original extension case, `isHidden`/`isSupported`,
+  `mimeFor`, `uniqueName`, `DEFAULT_ORDER`, `decodeHead`).
+- `data/storage/TrashBin.kt` (§G, `FlatJson` copy verbatim): `TrashBin` (`moveIn`/`copyIn`/`get`/`remove`/
+  `purgeOlderThan`, writes `meta.json` before moving the payload in, via `AtomicWriter.writeBlocking`),
+  internal `FlatJson` (flat string-map JSON codec, escapes quote/backslash/control chars, `\u%04x` for the
+  latter).
+- `data/storage/InternalStore.kt` (§H, behaviour normative): `InternalStore : DocumentStore` over
+  `filesDir/library` — canonical-path traversal guard (canonicalizes the root too), every member wrapped in
+  `withContext(io)` with the **injected** dispatcher, `list`/`read`/`write`/`stat`/`displayName`/`create`/
+  `createFolder`/`rename`/`move`/`trash`/`restore`/`changes` per the spec's normative behaviour (case-only
+  rename bypasses `uniqueName`; `move`/`rename`/`restore` never pass `REPLACE_EXISTING` to `Files.move`; excerpt
+  reads only `StorageLimits.EXCERPT_BYTES` via `FileInputStream.readNBytes` + `NoteFiles.decodeHead` +
+  `DocTitle.excerpt`), plus `purgeTrash(maxAgeMillis)` (trash entries + stray same-dir `.*.tmp` orphans older
+  than 1 h) and `newestDocument()` (recursive, skips hidden dirs/files via `walkTopDown().onEnter { }`).
+- `data/storage/RecoveryStore.kt` (§I): `RecoveryCopy`, `RecoveryStore` (`fileFor` = `sha1Hex(key.value) +
+  ".md"`, `write`/`read`/`delete`/`newerThan`, all `withContext(io)`).
+- Test files (all pure JVM, JUnit4 + Truth + `TemporaryFolder`; coroutines-test `runTest` / Turbine `test {}`
+  where needed): `LocationTest` (8), `TextCodecTest` (13), `AtomicWriterTest` (4), `NoteFilesTest` (12),
+  `TrashBinTest` (5), `InternalStoreTest` (17), `RecoveryStoreTest` (5) — **64 tests total**.
+- `plans/01-architecture.md` §3 updated (`NoteFiles.kt`, `Hashes.kt`, `TrashBin.kt` now tagged `[T10]` instead of
+  bare names) and §6.3 updated in this commit: `DocumentStore.displayName(ref)` added to the interface code
+  block, `TrashToken` + `StorageException` added as their own code lines, `LibraryEntry.caps: EntryCaps =
+  EntryCaps.ALL` added to its data class line — matching what the task file already anticipated in its prose.
+
+**Verification:**
+- Pre-flight: `make test` was green before starting (T01–T09 unaffected); confirmed
+  `dev.mdwriter.markdown.DocTitle.excerpt(text: String): String?` already exists (line 30 of
+  `core/markdown/src/main/kotlin/dev/mdwriter/markdown/DocTitle.kt`, from T04) — **no fallback implementation
+  needed**.
+- `./gradlew :app:compileDebugKotlin :app:compileDebugUnitTestKotlin`: BUILD SUCCESSFUL, no warnings.
+- `./gradlew :app:testDebugUnitTest --tests 'dev.mdwriter.data.storage.*' --tests 'dev.mdwriter.data.library.*'
+  --rerun`: BUILD SUCCESSFUL. Per-class counts from
+  `app/build/test-results/testDebugUnitTest/TEST-dev.mdwriter.data.*.xml`
+  (`tests="N" failures="0" errors="0"` each): `LocationTest=8 TextCodecTest=13 AtomicWriterTest=4
+  NoteFilesTest=12 TrashBinTest=5 InternalStoreTest=17 RecoveryStoreTest=5` (Acceptance 2–8, all exact scenarios
+  named in the task's Acceptance criteria are present: BOM/CRLF/CR/emoji/1252-fallback/NUL-sniff round trips;
+  mid-write/rename-time/concurrent/parent-dir-creation atomic-writer cases; extension/hidden/mime/uniqueName/
+  decodeHead cases; `FlatJson` round-trip of quotes/backslash/newline/tab/non-ASCII/emoji + moveIn/get/remove/
+  purge/corrupt-dir cases; collision-naming/hidden-listing/folder-then-newest-ordering/2 KB-bounded-excerpt/
+  nested-folder-move/rename(+case-only+collision)/trash-meta/restore(+folder-recreated+name-taken)/30-day-purge/
+  path-traversal/NotFound/TooLarge/Turbine-`changes`/recursive-`newestDocument` cases; recovery round-trip/
+  40-hex-filename/delete/newerThan/missing-key cases).
+- Acceptance 1: `grep -rl "RobolectricTestRunner\|AndroidJUnit4"
+  app/src/test/kotlin/dev/mdwriter/data/storage app/src/test/kotlin/dev/mdwriter/data/library` → **no output**
+  (exit 1).
+- Acceptance 9: `grep -rn "import android\."` over all 9 new main files in `data/storage` + both new files in
+  `data/library` → **no output** ("no android imports" printed).
+- Acceptance 10 / Definition of done: `make format` (see Deviations for one lint-convergence issue hit and
+  fixed) then `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → **BUILD SUCCESSFUL** (105 tasks). SARIF lint
+  report (`app/build/reports/lint-results-debug.sarif`): **0 errors**, 3 pre-existing warnings only (parsed with
+  a small Python check, not just grepped). No emulator used; no install/uninstall commands run (none needed —
+  this task has no UI).
+- Final `git status --porcelain`: only `data/` (new dirs under `app/src/main/kotlin/dev/mdwriter/` and
+  `app/src/test/kotlin/dev/mdwriter/`) plus `plans/01-architecture.md` and `plans/STATUS.md` — no stray
+  `build/`, `.gradle/`, `.kotlin/`, `*.jks` or keystore files.
+
+**Deviations from the plan:**
+- The two 01 §6.3 interface additions the task calls for (`DocumentStore.displayName(ref): String`,
+  `LibraryEntry.caps: EntryCaps = EntryCaps.ALL`) plus `TrashToken`/`StorageException` were added to the
+  `01-architecture.md` §6.3 code blocks in this commit, exactly as step 3 instructs — these are **not**
+  deviations from the contract (the task itself specifies them), just the documentation catch-up the task asked
+  for.
+- Hit the same Spotless/ktlint "reported line does not match a real violation in the file on disk" quirk T04's
+  STATUS entry already documented for `SmartEdit.kt` (there: `ktlint(standard:max-line-length)` at a line that
+  was actually a lone `}`). Here: `make format` repeatedly failed with `ktlint(standard:max-line-length)` at
+  `Location.kt:L44`, across three formatting passes, even though no line in the file (before or after ktlint's
+  own automatic reformatting) was ever measured over 120 columns (`awk '{if (length($0)>120) print NR}'` found
+  nothing). Root cause not fully isolated (as in T04); worked around the same way — by rewriting the one
+  compact one-line `if/else` expression inside `DocKey.toRef()`'s `"t:"` branch (`if (bar <= 0 || bar ==
+  rest.lastIndex) null else DocRef.TreeDoc(...)`, previously exactly 120 columns) into an explicit multi-line
+  braced `if { } else { }`. After that single change, `make format` converged immediately (single pass, no
+  further errors), and the resulting file was re-verified against every `LocationTest` case (still 8/8 green) —
+  this is a pure formatting change, not a logic change (the branch's return value is identical). No
+  `.editorconfig` change was needed or made this time (unlike T03's rule-suppression deviation); this is purely
+  a Spotless/ktlint line-number-reporting oddity, reproduced and worked around the same way as T04, not a new
+  systemic issue requiring a config change.
+- No other deviations. No library/plugin versions bumped, no new dependencies added. `DocTitle.excerpt` already
+  existed from T04, so the task's fallback "add it yourself" path was not taken.
+
+**Known issues / follow-ups:** none. `SafTreeStore`/`ExternalDocStore` (T14/T18), `DocumentRepository`/
+`AutosaveCoordinator`/`LibraryRepository`/`AppContainer` wiring (T11), and all UI (T12) are intentionally not
+built here, per Scope.
+
+**Notes for the next task:** **T11 must call `internalStore.purgeTrash()` on app start** (per the task's own
+Definition of done and 01 §5 — `AppContainer` wires `internalStore: InternalStore` and T11 is responsible for
+invoking `purgeTrash()`, e.g. once from `applicationScope` at startup; this task deliberately does not wire
+`AppContainer` at all, per Scope "Out"). Additional surface T11/T12/T14/T18 build on:
+- `InternalStore(root, trash, writer = AtomicWriter(), io = Dispatchers.IO, clock = System::currentTimeMillis)`
+  — **always pass an injected `io` dispatcher in tests** (T11's own tests will want a test dispatcher); every
+  public suspend member already runs its body in `withContext(io)`, so substituting a test dispatcher at the
+  constructor is enough, no internal changes needed.
+- `DocKey`'s string format (`"i:<relPath>"` / `"t:<treeUri>|<documentId>"` / `"x:<uri>"`) is exactly the 01 §6.3
+  contract and copied verbatim from the task — **do not change it**; it will be persisted by T11 (positions,
+  `lastOpenDoc`, recovery-file naming via `RecoveryStore.fileFor`).
+- `TrashBin`'s `meta.json` keys are plain strings via the verbatim `FlatJson` codec (not `org.json`); T14 will
+  add `"source" to "tree"` via `TrashBin.copyIn`, and `InternalStore.trash()` always writes `"originalRelPath"`
+  (T14/other stores are not required to).
+  `TrashBin.purgeOlderThan`/`InternalStore.purgeTrash` treat a directory with a missing/corrupt `meta.json` as
+  immediately eligible for deletion (`get()` returns null for it), regardless of age.
+- `NoteFiles.uniqueName`/`extensionOf`/`baseName` share a private `splitNameRaw` helper that preserves the
+  **original case** of the extension when building collision-suffixed names (e.g. `"Note.MD"` collisions get
+  `"Note 2.MD"`, not `"Note 2.md"`) — `extensionOf`'s own public return value is still always lowercased for
+  comparison purposes (`isSupported`, `mimeFor`).
+- `InternalStore.list()`/`readExcerpt` never reads more than `StorageLimits.EXCERPT_BYTES` (2 KB) per file — T12
+  can safely list large libraries without a per-file full read.
+- `AtomicWriter`/`RecoveryStore`/`TrashBin` all take an `AtomicWriter` instance with the default real
+  `FileOutputStream` opener; the `openTemp` constructor parameter exists purely for `AtomicWriterTest`'s
+  crash-injection tests — production code never needs to pass it.
+- `EntryCaps` is always `ALL` from `InternalStore` (internal files can always be renamed/deleted/written); T14's
+  `SafTreeStore` is the first store expected to return non-`ALL` caps from SAF's `COLUMN_FLAGS`.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
