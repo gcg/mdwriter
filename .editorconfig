@@ -7,6 +7,10 @@ insert_final_newline = true
 trim_trailing_whitespace = true
 indent_style = space
 indent_size = 4
+# T02 deviation (see plans/STATUS.md): compose-rules' custom EditorConfigProperty for the
+# compositionlocal-allowlist check is only resolved by Spotless/ktlint 1.8.0 from the universal [*] section,
+# not from a language-specific glob section such as [*.{kt,kts}] (verified empirically). Keep it here.
+compose_allowed_composition_locals = LocalWriterColors,LocalWriterTypography
 
 [*.{kt,kts}]
 ktlint_code_style = ktlint_official

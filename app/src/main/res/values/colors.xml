@@ -1,0 +1,5 @@
+<resources>
+    <!-- = the `bg` token (02 §2). Only the window/splash use it; Compose paints everything from WriterColors. -->
+    <color name="window_bg">#FFF7F7F7</color>
+    <color name="accent">#FF00B2FF</color>
+</resources>

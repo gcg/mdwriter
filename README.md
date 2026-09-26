@@ -100,3 +100,7 @@ calls: `export JAVA_HOME=$(/usr/libexec/java_home -v 21)` (Gradle 9 cannot run o
 - `app/` — the Android app: Compose UI, the View-based editor engine, storage, settings.
 - `core/markdown/` — a pure Kotlin/JVM Markdown engine (highlighter, SmartEdit, stats, HTML export).
 - `plans/` — the implementation plan this app is built from.
+
+### Fonts
+
+iA Writer Duo, Quattro, Mono by Information Architects Inc., SIL OFL 1.1 — see `app/src/main/assets/licenses/`.

@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.MdWriter" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Theme.MdWriter" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/window_bg</item>
         <!-- Platform SplashScreen (API 31+): page colour + the adaptive launcher icon. No core-splashscreen. -->
         <item name="android:windowSplashScreenBackground">@color/window_bg</item>

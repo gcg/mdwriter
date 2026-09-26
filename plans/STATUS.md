@@ -87,3 +87,125 @@ different key). `~/.config/mdwriter/` was never created or touched. `util/AppDis
 filename going forward (see Deviations); `data class AppDispatchers` itself is unchanged.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T02 — Design system: theme, fonts, icons, launcher icon, splash — DONE — 2026-09-26
+**What changed:**
+- Fonts: 12 iA Writer TTFs (Duo/Quattro/Mono × regular/bold/italic/bold_italic) + OFL licence fetched verbatim via
+  `plans/reference/scripts/fetch-fonts.sh`; `res/font/{duo,quattro,mono}.xml` family XMLs with explicit
+  `fontStyle`/`fontWeight` (400/700) per `plans/reference/fonts.md`.
+- Icons: 55 Material Symbols Rounded XMLs fetched via `fetch-icons.sh` (tint attribute stripped by the script).
+- Launcher icon: `ic_launcher_background/foreground/monochrome.xml` copied verbatim (by line range, not retyped)
+  from `plans/research/design.md` §8.2; `mipmap-anydpi/ic_launcher.xml` adaptive icon with background/foreground/
+  monochrome layers; `android:icon="@mipmap/ic_launcher"` added to the manifest `<application>`.
+- Platform theme/splash: `values/colors.xml`, `values-night/colors.xml` (`window_bg`, `accent`), `values/themes.xml`
+  + new `values-night/themes.xml` (`Theme.MdWriter` now sets `windowBackground`, `windowSplashScreenBackground`,
+  `colorAccent`, `colorControlActivated`).
+- Kotlin theme package `app/src/main/kotlin/dev/mdwriter/ui/theme/`: `WriterColors.kt` (3 palettes, 15 tokens,
+  `focusOverlayAlpha`), `Fonts.kt` (`WriterFont`, `PlatformFonts`, `PlatformFaces`), `Tokens.kt` (`WidthClass`,
+  `EditorMetrics`, `WriterDimens`, `WriterMotion`, `WriterTypography`, `hairline()`), `Theme.kt` (`ThemeMode`,
+  `writerColorsFor`, `toMaterialColorScheme`, `WriterTheme`, `MdWriterTheme`), `SystemBars.kt`
+  (`SystemBarsAppearance`), `DesignGallery.kt` (debug-only gallery: swatches, palette comparison, font
+  specimens, icon row).
+- `MainActivity.kt`: content now wrapped in `MdWriterTheme { if (BuildConfig.DEBUG) DesignGallery() else
+  LaunchPlaceholder() }`; `LaunchPlaceholder` added (T05 replaces it). `enableEdgeToEdge()` and the T01
+  `Log.d("MainActivity") { "onCreate …" }` line kept unchanged.
+- `.editorconfig`: added `compose_allowed_composition_locals = LocalWriterColors,LocalWriterTypography` — **in
+  the `[*]` section, not `[*.{kt,kts}]`** (see Deviations).
+- `tools/PngPixel.java` added verbatim from the task spec. `README.md` gained a "Fonts" credit line.
+- Tests: `WriterColorsTest`, `ThemeResolutionTest`, `TokensTest`, `DesignResourcesTest` (JVM, `app/src/test/…`),
+  `MdWriterThemeTest` (Robolectric), `FontsDeviceTest` (instrumented, `app/src/androidTest/…`).
+
+**Verification (emulator serial `emulator-5554`, Android 17 / API 37; debug app `dev.mdwriter.debug` only, no
+release build installed):**
+- `bash plans/reference/scripts/fetch-fonts.sh` → `fonts: 12 files, 1303688 bytes`.
+  `md5 -q app/src/main/assets/licenses/iA-Writer-fonts-OFL.txt` → `24cd6c256d592d23fdc3ef640e05f0ed`.
+- `bash plans/reference/scripts/fetch-icons.sh` → `icons: 55 requested, 55 present`; `xmllint --noout` on all 55
+  `ic_*.xml` (+ the 3 launcher drawables + the mipmap) → no output/errors; `grep -l colorControlNormal` on the 55
+  icons → 0 matches.
+- `make format && make check` → BUILD SUCCESSFUL. `spotlessCheck`/`spotlessKotlinCheck` clean. Lint: 0 errors (SARIF
+  shows only the expected `DataExtractionRules` warning plus a new `UnusedResources` warning for icons not yet
+  wired into UI — both are warnings, not errors, and don't fail `abortOnError=true`; `MissingApplicationIcon` is
+  gone now that the launcher icon exists). All JVM/Robolectric tests green, including the 5 new classes: `test-results/testDebugUnitTest/TEST-dev.mdwriter.ui.theme.{WriterColorsTest,ThemeResolutionTest,TokensTest,
+  DesignResourcesTest,MdWriterThemeTest}.xml` → 8+4+7+6+5 = 30 tests, 0 failures/errors. Release R8 build
+  (`:app:assembleRelease`) succeeded as part of `make check`.
+- `make test-device DEVICE=emulator-5554`: `Starting/Finished 4 tests on Pixel_10_Pro_XL(AVD) - 17`; BUILD
+  SUCCESSFUL. `androidTest-results/connected/debug/TEST-Pixel_10_Pro_XL(AVD) - 17-_app-.xml` → `tests="4"
+  failures="0" errors="0"` (`FontsDeviceTest`: `facesRenderDifferently`, `advanceWidthsMatchDesignFacts`,
+  `boldInkIsHeavierThanRegular`, `familyResolvesTheSameFacesAsTheIndividualFiles`).
+- `make install-debug DEVICE=emulator-5554` reinstalled the debug app after `test-device` (which does not appear
+  to have uninstalled it this time, but this was run defensively per the task's pitfalls).
+- Light screenshot (`/tmp/t02-light.png`, 1344×2992, `cmd uimode night no`): `PngPixel` → `#F7F7F7` at (10,10),
+  (10,1500) and (10,2982). Viewed: "Design gallery · light" title; 15 labelled token swatches with hex values in
+  Mono; 3 palette-comparison boxes (light/dark/black) each showing "Aa" + a blue caret bar; Duo/Quattro/Mono font
+  specimens (regular/italic/bold/bold-italic) each followed by H1–H6 headings that visibly grow (H1 clearly
+  ≥ 1.5× the body line, H6 in grey); in the Mono row "mmm" and "iii" render the same total width, while in Duo
+  and Quattro "mmm" is visibly wider than "iii". Scrolling down showed the icon row (library/overflow/bold/
+  italic/link/edit icons + the launcher-icon preview box) at the very bottom. Status bar icons were dark on the
+  light background.
+- Dark screenshot (`/tmp/t02-dark.png`, after `cmd uimode night yes`, 2 s wait): `PngPixel` → `#1A1A1A` at the
+  same three points; title read "Design gallery · dark"; status bar icons light. **No recreation:** `pidof
+  dev.mdwriter.debug` was `22686` before and after the uimode switch; `logcat -d -s MainActivity:D | grep -c
+  onCreate` (logcat cleared right before the debug relaunch) printed `1`.
+- App-info screenshot (`/tmp/t02-appinfo.png`, `am start -a android.settings.APPLICATION_DETAILS_SETTINGS -d
+  package:dev.mdwriter.debug`): shows the new adaptive icon — off-white circular badge, grey `#` hanging left of
+  a black heading bar and two shorter text bars, small blue caret at the end — clearly not the default Android
+  robot. Label reads "mdwriter (debug)"; "Permissions: No permissions requested".
+- `unzip -l app/build/outputs/apk/debug/app-debug.apk | grep ic_launcher` → the 3 drawables plus
+  `res/mipmap-anydpi-v21/ic_launcher.xml` (AGP renames the unqualified `mipmap-anydpi/` source folder to the
+  `-v21` qualifier at package time; this is normal and expected, not a deviation). `aapt2 dump xmltree --file
+  res/mipmap-anydpi-v21/ic_launcher.xml app-debug.apk` → `E: adaptive-icon` with `background`, `foreground` and
+  `monochrome` children. `aapt2 dump badging` → `application-icon-160/240/320/65534` all point at that XML;
+  `application-label:'mdwriter (debug)'`. Themed-icon (Wallpaper & style) screenshot not captured (optional per
+  the task); skipped for time.
+- `aapt2 dump permissions app/build/outputs/apk/release/app-release.apk` → exactly
+  `dev.mdwriter.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (no new dependency added a manifest permission).
+- `git status --porcelain` after `git add -A`: 12 `.ttf` files, the OFL licence, 58 `ic_*.xml` drawables (55 icons
+  + 3 launcher layers), the mipmap, the 6 new/changed `values*/colors.xml`+`themes.xml`, the 7 new Kotlin theme
+  files, `MainActivity.kt`, the manifest, `.editorconfig`, `README.md`, `tools/PngPixel.java` and the 6 new test
+  files — no `build/`, `.gradle/`, `.kotlin/`, `*.jks` or `keystore.properties` staged.
+- Emulator left in light mode: final `adb shell cmd uimode night` → `Night mode: no`.
+
+**Deviations from the plan:**
+- `.editorconfig`'s `compose_allowed_composition_locals = LocalWriterColors,LocalWriterTypography` had to be
+  moved from the `[*.{kt,kts}]` section (as the task's step 9 literally says) to the universal `[*]` section.
+  Empirically verified by toggling it back and forth twice: with the property under `[*.{kt,kts}]`,
+  `spotlessKotlinCheck`/`spotlessKotlinApply` fails both `LocalWriterColors` and `LocalWriterTypography` with
+  `ktlint(compose:compositionlocal-allowlist)` every time (as if the property were unset — compose-rules 0.6.6's
+  `getSet()` falls back to an empty allow-set); moving the identical line to `[*]` makes both declarations pass
+  immediately, with no other change. This looks like a real interaction quirk between Spotless 8.10.2's ktlint
+  integration and how it resolves *custom* (non-built-in) `EditorConfigProperty` objects contributed by a
+  ktlint `customRuleSets` provider — built-in ktlint properties (`max_line_length`, `ktlint_code_style`, …) are
+  resolved fine either way (confirmed by temporarily setting `max_line_length = 40` under `[*.{kt,kts}]` and
+  seeing it take effect). No change to `01-architecture.md` needed (this is a tooling/lint config detail, not an
+  architecture contract). No other deviations; no library/plugin versions were bumped; no new dependencies added;
+  the fonts are byte-for-byte unmodified; the launcher-icon XML was copied by line range, never retyped.
+
+**Known issues / follow-ups:**
+- Lint now reports `UnusedResources` (49) as a warning for icons this task provisions but doesn't wire into UI
+  yet (only 6 of the 55 are used by `DesignGallery`). This is expected — later tasks (T08/T09/T12/T13/T16/T17/T19)
+  consume the rest — and does not fail `make check` (`abortOnError=true` only affects errors; `warningsAsErrors`
+  is `false`).
+- Did not capture an optional themed-icon (Wallpaper & style → Themed icons) screenshot; not required by the
+  acceptance criteria's mandatory checks.
+
+**Notes for the next task:** All names below live in `dev.mdwriter.ui.theme` and are the contract later tasks
+build on — don't redeclare them:
+- `WriterTheme.colors` / `WriterTheme.typography` (Composable accessors for the current `WriterColors` /
+  `WriterTypography`); `LocalWriterColors` / `LocalWriterTypography` (both in the `.editorconfig`
+  `compose_allowed_composition_locals` allowlist under the `[*]` section — add new entries there, not under
+  `[*.{kt,kts}]`, per the Deviation above).
+- `ThemeMode { System, Light, Dark }`, `WriterFont { Duo, Quattro, Mono }`, `writerColorsFor(...)`,
+  `MdWriterTheme(themeMode, pureBlack, font) { … }`.
+- `PlatformFonts.load(context, font): PlatformFaces` and `PlatformFonts.family(context, font): Typeface` — this is
+  how T06's `FontSet` should get its Typefaces (never re-derive font loading).
+- `EditorMetrics` (text size steps, line pitch, heading scale, margins/gutter/top-room, measure options, caret
+  size), `WriterDimens` (chrome/drawer/pill/menu/sheet/preview dimensions), `WriterMotion` (fade/pill/preview
+  timings + easings) — all numbers from 02 §3/§5–§11, ready for T05 onward.
+- `hairline()` gives 1 physical pixel as `Dp` for hairline borders/dividers.
+- `tools/PngPixel.java` — run with `java -Djava.awt.headless=true tools/PngPixel.java shot.png x y …`; later UI
+  tasks can reuse it for their own screenshot colour checks.
+- The debug app was left installed on `emulator-5554`; the emulator is in light mode. The release APK was built
+  (`assembleRelease`, part of `make check`) but never installed via `make install` in this session (not needed for
+  T02's checks) — `~/.config/mdwriter/` was never touched.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
