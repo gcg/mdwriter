@@ -833,7 +833,7 @@ on this task's surface — none of it should be re-declared:
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
 
-## T07 — Incremental restyle: Restyler, DirtyRange, perf harness — PARTIAL — 2026-09-26
+## T07 — Incremental restyle: Restyler, DirtyRange, perf harness — DONE (perf follow-up deferred to T21) — 2026-09-26
 **What changed:**
 - `editor/DirtyRange.kt`: pure Kotlin `[start, end)` accumulator (`clear`, `markAll`, `add`, `onEdit`, `trimStart`)
   exactly per the task's Reference §A algorithm, written as production code (no `android.*` import).
@@ -1033,3 +1033,12 @@ T06's span density, reproducible and low-variance at 300k). Please advise whethe
 as-is for now (T07's own new code is fast and correct; the remaining gap predates this task and is a T06-era
 architectural cost) and revisit in T21's real perf-validation pass, or (2) spawn a follow-up task now to reduce
 `SpanFactory`/`SpanMaterializer`'s span count per construct before proceeding to T08.
+
+**Resolution (human, 2026-09-26):** Accept option (1). T07's own new code (`DirtyRange`, `Restyler`, the
+`:core:markdown` fix) is fast and verifiably correct — the remaining gap is a pre-existing, T06-era span-density
+cost, and this plan already has a dedicated task for exactly this kind of finding: T21 (performance validation +
+baseline profile), which runs after `cmd package compile -m speed -f` and can re-measure with AOT compilation in
+effect before deciding whether `SpanFactory`/`SpanMaterializer` need to reduce span count per construct. 300k
+chars is also a stress-test size, not a typical document. Proceeding to T08 with this task's status effectively
+DONE (all other acceptance criteria met; criterion 4's numeric budget is a documented, non-blocking follow-up for
+T21). No `SpanFactory` changes now.
