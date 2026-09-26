@@ -1,3 +1,23 @@
 <resources>
     <string name="app_name">mdwriter</string>
+
+    <!-- Selection toolbar (T09) -->
+    <string name="tb_bold">Bold</string>
+    <string name="tb_italic">Italic</string>
+    <string name="tb_heading">Heading</string>
+    <string name="tb_link">Link</string>
+    <string name="tb_copy">Copy</string>
+    <string name="tb_paste">Paste</string>
+    <string name="tb_cut">Cut</string>
+    <string name="tb_code">Code</string>
+    <string name="tb_more">More formatting</string>
+    <string name="tb_strike">Strikethrough</string>
+    <string name="tb_highlight">Highlight</string>
+    <string name="tb_quote">Quote</string>
+    <string name="tb_bullets">Bulleted list</string>
+    <string name="tb_numbered">Numbered list</string>
+    <string name="tb_task">Task</string>
+    <string name="tb_code_block">Code block</string>
+    <string name="tb_clear">Clear formatting</string>
+    <string name="tb_select_all">Select all</string>
 </resources>

@@ -46,6 +46,7 @@ class MarkdownEditText(
     internal var mdUndo: MdUndoManager? = null
     internal var smartInput: SmartInput? = null
     internal var commands: EditorCommands? = null
+    internal var selectionUi: SelectionUi? = null
 
     private var swallowKeyUp = -1
     private var taskDown = -1
@@ -70,6 +71,9 @@ class MarkdownEditText(
         hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
         includeFontPadding = false // every line = 1.30 em box + extra (uniform pitch)
         revealOnFocusHint = false // no ScrollView scroll-to-child jumps on focus
+        // Hard rule 10: suppress the system floating toolbar but keep handles/IME. Deliberately no
+        // customInsertionActionModeCallback — the caret "Paste" pill must stay (T09 AC8).
+        customSelectionActionModeCallback = HideSystemSelectionToolbar
     }
 
     fun applyColors(c: EditorColors) {
@@ -226,6 +230,7 @@ class MarkdownEditText(
     ) {
         super.onSelectionChanged(selStart, selEnd)
         mdUndo?.onSelectionChanged(selStart, selEnd)
+        selectionUi?.onSelectionChanged(selStart, selEnd)
     }
 
     override fun onFocusChanged(
@@ -235,6 +240,7 @@ class MarkdownEditText(
     ) {
         super.onFocusChanged(focused, direction, previouslyFocusedRect)
         if (!focused) mdUndo?.hardBreak()
+        selectionUi?.onFocusChanged(focused)
     }
 
     override fun performClick(): Boolean = super.performClick()

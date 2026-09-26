@@ -1,5 +1,6 @@
 package dev.mdwriter.editor
 
+import android.content.ClipboardManager
 import android.content.Context
 import android.os.SystemClock
 import android.text.Selection
@@ -7,8 +8,10 @@ import android.text.Spanned
 import android.view.WindowInsets
 import android.view.inputmethod.BaseInputConnection
 import android.widget.TextView
+import androidx.core.view.ViewCompat
 import androidx.core.view.doOnNextLayout
 import androidx.core.view.doOnPreDraw
+import dev.mdwriter.R
 import dev.mdwriter.editor.spans.EditorStyle
 import dev.mdwriter.editor.spans.HangRoomSpan
 import dev.mdwriter.editor.spans.PaintTextMeasurer
@@ -95,6 +98,11 @@ class EditorController(
 
     private val smartInput = SmartInput(editText, { highlighter }, mdUndo, ::apply)
 
+    private val selectionUi = SelectionUi(editText, scrollView)
+
+    /** T09 (01 §6.2): visibility/anchor/range of the current selection, in [scrollView] viewport coords. */
+    val selection: StateFlow<SelectionState> = selectionUi.state
+
     private val commandsImpl =
         object : EditorCommands {
             override fun perform(action: ToolbarAction) = this@EditorController.perform(action)
@@ -116,6 +124,26 @@ class EditorController(
 
     val isReadOnly: Boolean get() = editText.readOnly
 
+    // Declared BEFORE `init` (Kotlin runs property initializers/init blocks in textual order): `init` below
+    // calls refreshAccessibilityActions(), which reads both of these.
+    private var a11yIds = emptyList<Int>()
+    private val a11yActions =
+        listOf(
+            ToolbarAction.Bold to R.string.tb_bold,
+            ToolbarAction.Italic to R.string.tb_italic,
+            ToolbarAction.Strike to R.string.tb_strike,
+            ToolbarAction.Highlight to R.string.tb_highlight,
+            ToolbarAction.Code to R.string.tb_code,
+            ToolbarAction.CodeBlock to R.string.tb_code_block,
+            ToolbarAction.Link to R.string.tb_link,
+            ToolbarAction.HeadingCycle to R.string.tb_heading,
+            ToolbarAction.Quote to R.string.tb_quote,
+            ToolbarAction.BulletList to R.string.tb_bullets,
+            ToolbarAction.NumberedList to R.string.tb_numbered,
+            ToolbarAction.TaskList to R.string.tb_task,
+            ToolbarAction.ClearFormatting to R.string.tb_clear,
+        )
+
     init {
         scrollView.onGeometryChanged = { syncHangRoom() }
         editText.addTextChangedListener(restyler)
@@ -123,6 +151,10 @@ class EditorController(
         editText.mdUndo = mdUndo
         editText.smartInput = smartInput
         editText.commands = commandsImpl
+        editText.selectionUi = selectionUi
+        editText.addOnAttachStateChangeListener(selectionUi)
+        if (editText.isAttachedToWindow) selectionUi.onViewAttachedToWindow(editText)
+        refreshAccessibilityActions()
     }
 
     private fun updateUndoFlows() {
@@ -165,25 +197,28 @@ class EditorController(
         }
     }
 
-    /** One undo step, one batch edit, selection taken from the edit itself. A no-op on a read-only document. */
-    fun apply(edit: TextEdit) {
-        val ed = editText.text ?: return
-        if (editText.readOnly) return
-        val m = edit.minimize(ed)
-        mdUndo.hardBreak()
-        editText.beginBatchEdit()
-        try {
-            mdUndo.group {
-                val cs = BaseInputConnection.getComposingSpanStart(ed)
-                val ce = BaseInputConnection.getComposingSpanEnd(ed)
-                if (cs != -1 && cs <= m.end && ce >= m.start) BaseInputConnection.removeComposingSpans(ed)
-                ed.replace(m.start, m.end, m.replacement)
-                Selection.setSelection(ed, m.selStart.coerceIn(0, ed.length), m.selEnd.coerceIn(0, ed.length))
+    /** One undo step, one batch edit, selection taken from the edit itself. A no-op on a read-only document.
+     * Wrapped in [SelectionUi.programmatic] (T09): our own edits (toolbar/shortcut) re-anchor the pill at once
+     * instead of hiding-then-150ms-reshowing, so a second action can chain onto the still-selected text. */
+    fun apply(edit: TextEdit) =
+        selectionUi.programmatic {
+            val ed = editText.text ?: return@programmatic
+            if (editText.readOnly) return@programmatic
+            val m = edit.minimize(ed)
+            mdUndo.hardBreak()
+            editText.beginBatchEdit()
+            try {
+                mdUndo.group {
+                    val cs = BaseInputConnection.getComposingSpanStart(ed)
+                    val ce = BaseInputConnection.getComposingSpanEnd(ed)
+                    if (cs != -1 && cs <= m.end && ce >= m.start) BaseInputConnection.removeComposingSpans(ed)
+                    ed.replace(m.start, m.end, m.replacement)
+                    Selection.setSelection(ed, m.selStart.coerceIn(0, ed.length), m.selEnd.coerceIn(0, ed.length))
+                }
+            } finally {
+                editText.endBatchEdit()
             }
-        } finally {
-            editText.endBatchEdit()
         }
-    }
 
     /** Formatting/clipboard commands (01 §6.2). A no-op on a read-only document (except select-all, which never
      * mutates text). */
@@ -291,6 +326,27 @@ class EditorController(
         editText.windowInsetsController?.hide(WindowInsets.Type.ime())
     }
 
+    /** Whether the pill's Paste button should be enabled. Reads only [android.content.ClipDescription] (never
+     * `getPrimaryClip()`, which on some OEM keyboards/launchers can surface a "X pasted" toast/notification). */
+    fun canPaste(): Boolean {
+        val cm = editText.context.getSystemService(ClipboardManager::class.java) ?: return false
+        return cm.hasPrimaryClip() && cm.primaryClipDescription?.hasMimeType("text/*") == true
+    }
+
+    /** (Re)installs the pill's actions as accessibility custom actions on the EditText (01 §6.2: never
+     * `setAccessibilityDelegate`). Called once from [init]; T19 calls it again whenever `highlightSyntax` changes
+     * (its `Highlight` entry is filtered out otherwise). */
+    fun refreshAccessibilityActions() {
+        a11yIds.forEach { ViewCompat.removeAccessibilityAction(editText, it) }
+        a11yIds =
+            a11yActions.filter { it.first != ToolbarAction.Highlight || highlightEnabled }.map { (action, label) ->
+                ViewCompat.addAccessibilityAction(editText, editText.context.getString(label)) { _, _ ->
+                    perform(action)
+                    true
+                }
+            }
+    }
+
     fun caret(): Int = editText.selectionEnd
 
     fun scrollY(): Int = scrollView.scrollY
@@ -298,5 +354,6 @@ class EditorController(
     fun release() {
         scrollView.onGeometryChanged = null
         editText.removeTextChangedListener(mdUndo)
+        editText.removeOnAttachStateChangeListener(selectionUi)
     }
 }
