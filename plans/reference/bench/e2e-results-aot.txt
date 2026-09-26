@@ -1,0 +1,109 @@
+== edittext-plain 20000
+09-25 13:20:00.336  5400  5400 I MDBENCH : RESULT|e2e|20000|edittext-plain|open-to-first-frame|n=1|med=1089.43
+09-25 13:20:07.953  5400  5400 I MDBENCH : RESULT|e2e|20000|edittext-plain|edit-call|n=16|min=1.04|med=2.43|p90=15.70|max=48.77
+09-25 13:20:07.953  5400  5400 I MDBENCH : RESULT|e2e|20000|edittext-plain|frame-total|n=16|min=17.25|med=31.52|p90=60.85|max=112.90
+09-25 13:20:07.953  5400  5400 I MDBENCH : RESULT|e2e|20000|edittext-plain|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.24|med=0.70|p90=1.13|max=1.73
+09-25 13:20:07.953  5400  5400 I MDBENCH : RESULT|e2e|20000|edittext-plain|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=1.34|med=3.39|p90=16.20|max=49.52
+== edittext-fast 20000
+09-25 13:20:11.800  5463  5463 I MDBENCH : RESULT|e2e|20000|edittext-fast|open-to-first-frame|n=1|med=1162.53
+09-25 13:20:19.472  5463  5463 I MDBENCH : RESULT|e2e|20000|edittext-fast|edit-call|n=16|min=3.95|med=6.27|p90=12.58|max=15.04
+09-25 13:20:19.473  5463  5463 I MDBENCH : RESULT|e2e|20000|edittext-fast|frame-total|n=16|min=18.72|med=24.13|p90=47.69|max=53.60
+09-25 13:20:19.473  5463  5463 I MDBENCH : RESULT|e2e|20000|edittext-fast|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.37|med=0.87|p90=1.67|max=18.21
+09-25 13:20:19.473  5463  5463 I MDBENCH : RESULT|e2e|20000|edittext-fast|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=4.32|med=7.19|p90=15.74|max=25.34
+== compose-plain 20000
+09-25 13:20:22.983  5546  5546 I MDBENCH : RESULT|e2e|20000|compose-plain|open-to-first-frame|n=1|med=934.18
+09-25 13:20:30.642  5546  5546 I MDBENCH : RESULT|e2e|20000|compose-plain|edit-call|n=16|min=0.32|med=0.42|p90=0.63|max=0.65
+09-25 13:20:30.642  5546  5546 I MDBENCH : RESULT|e2e|20000|compose-plain|frame-total|n=16|min=20.14|med=23.47|p90=29.28|max=43.77
+09-25 13:20:30.642  5546  5546 I MDBENCH : RESULT|e2e|20000|compose-plain|frame-ui(anim+layout+draw+input+sync)|n=16|min=9.41|med=10.56|p90=12.92|max=14.08
+09-25 13:20:30.642  5546  5546 I MDBENCH : RESULT|e2e|20000|compose-plain|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=9.79|med=11.02|p90=13.24|max=14.45
+== compose-state 20000
+09-25 13:20:33.739  5611  5611 I MDBENCH : RESULT|e2e|20000|compose-state|open-to-first-frame|n=1|med=604.33
+09-25 13:20:41.710  5611  5611 I MDBENCH : RESULT|e2e|20000|compose-state|edit-call|n=16|min=0.49|med=0.87|p90=1.25|max=1.30
+09-25 13:20:41.710  5611  5611 I MDBENCH : RESULT|e2e|20000|compose-state|frame-total|n=16|min=67.01|med=67.20|p90=68.94|max=69.28
+09-25 13:20:41.710  5611  5611 I MDBENCH : RESULT|e2e|20000|compose-state|frame-ui(anim+layout+draw+input+sync)|n=16|min=48.13|med=54.10|p90=56.57|max=57.24
+09-25 13:20:41.710  5611  5611 I MDBENCH : RESULT|e2e|20000|compose-state|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=48.90|med=54.91|p90=57.34|max=58.53
+== compose-ot 20000
+09-25 13:20:44.276  5666  5666 I MDBENCH : RESULT|e2e|20000|compose-ot|open-to-first-frame|n=1|med=639.91
+09-25 13:20:52.202  5666  5666 I MDBENCH : RESULT|e2e|20000|compose-ot|edit-call|n=16|min=0.31|med=0.55|p90=1.09|max=2.67
+09-25 13:20:52.204  5666  5666 I MDBENCH : RESULT|e2e|20000|compose-ot|frame-total|n=16|min=57.72|med=70.58|p90=123.17|max=154.84
+09-25 13:20:52.204  5666  5666 I MDBENCH : RESULT|e2e|20000|compose-ot|frame-ui(anim+layout+draw+input+sync)|n=16|min=43.67|med=48.54|p90=82.83|max=122.68
+09-25 13:20:52.204  5666  5666 I MDBENCH : RESULT|e2e|20000|compose-ot|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=44.02|med=48.88|p90=83.21|max=123.23
+== edittext 20000
+09-25 13:20:55.428  5715  5715 I MDBENCH : RESULT|e2e|20000|edittext|open-to-first-frame|n=1|med=1058.30
+09-25 13:21:03.583  5715  5715 I MDBENCH : RESULT|e2e|20000|edittext|edit-call|n=16|min=28.90|med=33.77|p90=45.37|max=56.35
+09-25 13:21:03.583  5715  5715 I MDBENCH : RESULT|e2e|20000|edittext|frame-total|n=16|min=27.50|med=35.78|p90=63.34|max=77.87
+09-25 13:21:03.583  5715  5715 I MDBENCH : RESULT|e2e|20000|edittext|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.28|med=0.33|p90=0.70|max=1.46
+09-25 13:21:03.583  5715  5715 I MDBENCH : RESULT|e2e|20000|edittext|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=29.21|med=34.10|p90=45.74|max=56.87
+== edittext-plain 100000
+09-25 13:21:06.169  5766  5766 I MDBENCH : RESULT|e2e|100000|edittext-plain|open-to-first-frame|n=1|med=682.24
+09-25 13:21:14.226  5766  5766 I MDBENCH : RESULT|e2e|100000|edittext-plain|edit-call|n=16|min=1.15|med=1.60|p90=3.21|max=11.48
+09-25 13:21:14.226  5766  5766 I MDBENCH : RESULT|e2e|100000|edittext-plain|frame-total|n=16|min=17.18|med=18.53|p90=20.78|max=26.73
+09-25 13:21:14.226  5766  5766 I MDBENCH : RESULT|e2e|100000|edittext-plain|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.19|med=0.27|p90=0.30|max=0.31
+09-25 13:21:14.226  5766  5766 I MDBENCH : RESULT|e2e|100000|edittext-plain|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=1.34|med=1.88|p90=3.50|max=11.79
+== edittext-fast 100000
+09-25 13:21:16.751  5818  5818 I MDBENCH : RESULT|e2e|100000|edittext-fast|open-to-first-frame|n=1|med=698.52
+09-25 13:21:25.164  5818  5818 I MDBENCH : RESULT|e2e|100000|edittext-fast|edit-call|n=16|min=13.54|med=17.94|p90=21.29|max=22.01
+09-25 13:21:25.164  5818  5818 I MDBENCH : RESULT|e2e|100000|edittext-fast|frame-total|n=16|min=17.10|med=20.72|p90=33.68|max=35.46
+09-25 13:21:25.164  5818  5818 I MDBENCH : RESULT|e2e|100000|edittext-fast|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.45|med=0.52|p90=0.69|max=0.70
+09-25 13:21:25.165  5818  5818 I MDBENCH : RESULT|e2e|100000|edittext-fast|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=13.99|med=18.40|p90=21.89|max=22.58
+== compose-plain 100000
+09-25 13:21:27.376  5874  5874 I MDBENCH : RESULT|e2e|100000|compose-plain|open-to-first-frame|n=1|med=719.48
+09-25 13:21:35.276  5874  5874 I MDBENCH : RESULT|e2e|100000|compose-plain|edit-call|n=16|min=0.94|med=1.28|p90=1.43|max=3.15
+09-25 13:21:35.276  5874  5874 I MDBENCH : RESULT|e2e|100000|compose-plain|frame-total|n=16|min=122.53|med=134.18|p90=150.41|max=150.60
+09-25 13:21:35.276  5874  5874 I MDBENCH : RESULT|e2e|100000|compose-plain|frame-ui(anim+layout+draw+input+sync)|n=16|min=112.41|med=118.74|p90=131.28|max=131.37
+09-25 13:21:35.277  5874  5874 I MDBENCH : RESULT|e2e|100000|compose-plain|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=113.54|med=119.68|p90=132.64|max=134.42
+== compose-state 100000
+09-25 13:21:38.689  5923  5923 I MDBENCH : RESULT|e2e|100000|compose-state|open-to-first-frame|n=1|med=1353.70
+09-25 13:21:56.244  5923  5923 I MDBENCH : RESULT|e2e|100000|compose-state|edit-call|n=16|min=0.88|med=1.07|p90=2.55|max=2.96
+09-25 13:21:56.244  5923  5923 I MDBENCH : RESULT|e2e|100000|compose-state|frame-total|n=16|min=872.26|med=1467.09|p90=1533.59|max=1573.02
+09-25 13:21:56.244  5923  5923 I MDBENCH : RESULT|e2e|100000|compose-state|frame-ui(anim+layout+draw+input+sync)|n=16|min=835.80|med=872.88|p90=940.64|max=969.44
+09-25 13:21:56.244  5923  5923 I MDBENCH : RESULT|e2e|100000|compose-state|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=836.85|med=873.87|p90=941.92|max=970.63
+== compose-ot 100000
+09-25 13:21:59.364  5990  5990 I MDBENCH : RESULT|e2e|100000|compose-ot|open-to-first-frame|n=1|med=1783.87
+09-25 13:22:16.770  5990  5990 I MDBENCH : RESULT|e2e|100000|compose-ot|edit-call|n=16|min=0.74|med=0.78|p90=0.98|max=1.42
+09-25 13:22:16.770  5990  5990 I MDBENCH : RESULT|e2e|100000|compose-ot|frame-total|n=16|min=891.50|med=1440.12|p90=1467.06|max=1467.70
+09-25 13:22:16.770  5990  5990 I MDBENCH : RESULT|e2e|100000|compose-ot|frame-ui(anim+layout+draw+input+sync)|n=16|min=822.46|med=831.66|p90=845.54|max=850.45
+09-25 13:22:16.770  5990  5990 I MDBENCH : RESULT|e2e|100000|compose-ot|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=823.20|med=832.47|p90=846.96|max=851.32
+== edittext 100000
+09-25 13:22:18.902  6052  6052 I MDBENCH : RESULT|e2e|100000|edittext|open-to-first-frame|n=1|med=585.82
+09-25 13:22:29.655  6052  6052 I MDBENCH : RESULT|e2e|100000|edittext|edit-call|n=16|min=152.57|med=161.31|p90=164.00|max=167.71
+09-25 13:22:29.655  6052  6052 I MDBENCH : RESULT|e2e|100000|edittext|frame-total|n=16|min=150.35|med=156.05|p90=167.23|max=167.76
+09-25 13:22:29.655  6052  6052 I MDBENCH : RESULT|e2e|100000|edittext|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.46|med=0.52|p90=0.73|max=1.02
+09-25 13:22:29.655  6052  6052 I MDBENCH : RESULT|e2e|100000|edittext|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=153.13|med=161.84|p90=164.45|max=168.19
+== edittext-plain 300000
+09-25 13:22:32.524  6106  6106 I MDBENCH : RESULT|e2e|300000|edittext-plain|open-to-first-frame|n=1|med=719.11
+09-25 13:22:40.543  6106  6106 I MDBENCH : RESULT|e2e|300000|edittext-plain|edit-call|n=16|min=1.24|med=3.42|p90=4.30|max=14.87
+09-25 13:22:40.543  6106  6106 I MDBENCH : RESULT|e2e|300000|edittext-plain|frame-total|n=16|min=17.06|med=19.27|p90=20.68|max=23.82
+09-25 13:22:40.543  6106  6106 I MDBENCH : RESULT|e2e|300000|edittext-plain|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.17|med=0.47|p90=0.69|max=0.81
+09-25 13:22:40.543  6106  6106 I MDBENCH : RESULT|e2e|300000|edittext-plain|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=1.44|med=3.89|p90=4.95|max=15.48
+== edittext-fast 300000
+09-25 13:22:43.347  6157  6157 I MDBENCH : RESULT|e2e|300000|edittext-fast|open-to-first-frame|n=1|med=950.17
+09-25 13:22:52.427  6157  6157 I MDBENCH : RESULT|e2e|300000|edittext-fast|edit-call|n=16|min=34.68|med=47.29|p90=52.57|max=59.36
+09-25 13:22:52.427  6157  6157 I MDBENCH : RESULT|e2e|300000|edittext-fast|frame-total|n=16|min=33.91|med=50.53|p90=52.41|max=67.02
+09-25 13:22:52.427  6157  6157 I MDBENCH : RESULT|e2e|300000|edittext-fast|frame-ui(anim+layout+draw+input+sync)|n=16|min=0.71|med=0.79|p90=0.97|max=1.42
+09-25 13:22:52.427  6157  6157 I MDBENCH : RESULT|e2e|300000|edittext-fast|per-keystroke-main-thread-work(edit+frame-ui)|n=16|min=35.40|med=48.05|p90=53.36|max=60.77
+== compose-plain 300000
+09-25 13:22:54.613  6209  6209 I MDBENCH : RESULT|e2e|300000|compose-plain|open-to-first-frame|n=1|med=1496.68
+09-25 13:23:04.883  6209  6209 I MDBENCH : RESULT|e2e|300000|compose-plain|edit-call|n=8|min=2.26|med=2.46|p90=3.05|max=10.79
+09-25 13:23:04.883  6209  6209 I MDBENCH : RESULT|e2e|300000|compose-plain|frame-total|n=8|min=852.34|med=883.84|p90=885.14|max=885.37
+09-25 13:23:04.883  6209  6209 I MDBENCH : RESULT|e2e|300000|compose-plain|frame-ui(anim+layout+draw+input+sync)|n=8|min=840.69|med=863.83|p90=866.34|max=869.54
+09-25 13:23:04.883  6209  6209 I MDBENCH : RESULT|e2e|300000|compose-plain|per-keystroke-main-thread-work(edit+frame-ui)|n=8|min=843.34|med=866.13|p90=869.39|max=872.01
+== compose-state 300000
+09-25 13:23:15.713  6265  6265 I MDBENCH : RESULT|e2e|300000|compose-state|open-to-first-frame|n=1|med=8249.57
+09-25 13:24:20.420  6265  6265 I MDBENCH : RESULT|e2e|300000|compose-state|edit-call|n=8|min=2.44|med=3.02|p90=3.21|max=5.00
+09-25 13:24:20.421  6265  6265 I MDBENCH : RESULT|e2e|300000|compose-state|frame-total|n=8|min=11568.80|med=11703.99|p90=11734.26|max=12090.25
+09-25 13:24:20.421  6265  6265 I MDBENCH : RESULT|e2e|300000|compose-state|frame-ui(anim+layout+draw+input+sync)|n=8|min=6908.00|med=6972.51|p90=7016.72|max=7084.84
+09-25 13:24:20.421  6265  6265 I MDBENCH : RESULT|e2e|300000|compose-state|per-keystroke-main-thread-work(edit+frame-ui)|n=8|min=6910.71|med=6975.73|p90=7019.16|max=7089.84
+== compose-ot 300000
+09-25 13:24:32.239  6434  6434 I MDBENCH : RESULT|e2e|300000|compose-ot|open-to-first-frame|n=1|med=8179.78
+09-25 13:25:38.820  6434  6434 I MDBENCH : RESULT|e2e|300000|compose-ot|edit-call|n=8|min=2.16|med=2.32|p90=2.47|max=3.70
+09-25 13:25:38.820  6434  6434 I MDBENCH : RESULT|e2e|300000|compose-ot|frame-total|n=8|min=11870.77|med=11983.75|p90=12117.53|max=12133.77
+09-25 13:25:38.820  6434  6434 I MDBENCH : RESULT|e2e|300000|compose-ot|frame-ui(anim+layout+draw+input+sync)|n=8|min=6879.24|med=6966.91|p90=7048.30|max=7067.77
+09-25 13:25:38.820  6434  6434 I MDBENCH : RESULT|e2e|300000|compose-ot|per-keystroke-main-thread-work(edit+frame-ui)|n=8|min=6882.94|med=6969.16|p90=7050.73|max=7070.09
+== edittext 300000
+09-25 13:25:41.932  6554  6554 I MDBENCH : RESULT|e2e|300000|edittext|open-to-first-frame|n=1|med=1483.11
+09-25 13:25:53.323  6554  6554 I MDBENCH : RESULT|e2e|300000|edittext|edit-call|n=8|min=535.51|med=693.18|p90=707.76|max=789.21
+09-25 13:25:53.323  6554  6554 I MDBENCH : RESULT|e2e|300000|edittext|frame-total|n=8|min=550.41|med=700.25|p90=715.28|max=802.32
+09-25 13:25:53.323  6554  6554 I MDBENCH : RESULT|e2e|300000|edittext|frame-ui(anim+layout+draw+input+sync)|n=8|min=0.76|med=0.98|p90=2.52|max=4.34
+09-25 13:25:53.323  6554  6554 I MDBENCH : RESULT|e2e|300000|edittext|per-keystroke-main-thread-work(edit+frame-ui)|n=8|min=536.34|med=695.70|p90=708.77|max=790.19
+ALLDONE
