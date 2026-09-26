@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The editor widget's own style. Colours/typeface/size are all set in code (EditorStyle, T05 rule 2);
+         this only carries what a style resource must: no background chrome, platform undo disabled (we own
+         undo from T08), no android:id (rule 8, set by the widget itself: id = View.NO_ID). -->
+    <style name="Widget.MdWriter.Editor" parent="android:Widget.Material.EditText">
+        <item name="android:allowUndo">false</item>
+        <item name="android:background">@null</item>
+    </style>
+</resources>

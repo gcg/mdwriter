@@ -4,14 +4,17 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.stringResource
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import dev.mdwriter.debug.FrameWorkLogger
+import dev.mdwriter.debug.SampleDocs
+import dev.mdwriter.editor.EditorController
+import dev.mdwriter.editor.InstallRequest
+import dev.mdwriter.editor.spans.EditorStyle
+import dev.mdwriter.editor.spans.toEditorColors
+import dev.mdwriter.ui.editor.EditorHost
 import dev.mdwriter.ui.theme.DesignGallery
 import dev.mdwriter.ui.theme.MdWriterTheme
 import dev.mdwriter.ui.theme.WriterTheme
@@ -22,27 +25,56 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         // T02 and T20 count this line in logcat to prove the activity was NOT recreated. Keep the tag and wording.
         Log.d(TAG) { "onCreate restored=${savedInstanceState != null}" }
+        // T05 rotation check (Acceptance 10): configChanges keeps this Activity alive, so this logs exactly once
+        // per process, never once per rotation.
+        if (BuildConfig.DEBUG) Log.i(LIFE_TAG) { "onCreate" }
         enableEdgeToEdge()
         setContent {
             MdWriterTheme {
-                if (BuildConfig.DEBUG) DesignGallery() else LaunchPlaceholder()
+                if (BuildConfig.DEBUG && intent.getBooleanExtra("gallery", false)) {
+                    DesignGallery()
+                } else {
+                    EditorDemo()
+                }
             }
         }
     }
 
+    // T11 replaces this with EditorScreen/EditorViewModel + real document loading.
+    @Composable
+    private fun EditorDemo() {
+        val colors = WriterTheme.colors
+        val controller = remember { EditorController(this, EditorStyle.create(this, colors)) }
+        val frameLogger =
+            remember {
+                if (BuildConfig.DEBUG && intent.getBooleanExtra("frameLog", false)) FrameWorkLogger(window) else null
+            }
+        LaunchedEffect(Unit) {
+            controller.install(
+                InstallRequest(
+                    text =
+                        (if (BuildConfig.DEBUG) SampleDocs.forExtra(intent.getStringExtra("sample")) else null)
+                            ?: "",
+                    selection = 0,
+                    scrollY = 0,
+                    readOnly = false,
+                ),
+            )
+        }
+        LaunchedEffect(colors) {
+            controller.setStyle(controller.style.also { it.colors = colors.toEditorColors() })
+        }
+        DisposableEffect(Unit) {
+            onDispose {
+                frameLogger?.stop()
+                controller.release()
+            }
+        }
+        EditorHost(controller)
+    }
+
     private companion object {
         const val TAG = "MainActivity"
-    }
-}
-
-// T05 replaces this with the editor host.
-@Composable
-private fun LaunchPlaceholder(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize().background(WriterTheme.colors.bg), contentAlignment = Alignment.Center) {
-        Text(
-            text = stringResource(R.string.app_name),
-            style = WriterTheme.typography.body,
-            color = WriterTheme.colors.text,
-        )
+        const val LIFE_TAG = "MDLIFE"
     }
 }
