@@ -1290,3 +1290,219 @@ keycombination KEYCODE_CTRL_LEFT KEYCODE_Z`):**
   still holds the shared throwaway signing key.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T09 — Selection toolbar pill — DONE — 2026-09-26
+**What changed:**
+- `app/src/main/kotlin/dev/mdwriter/editor/SelectionUi.kt` — **new**: `SelectionState(visible, anchor, start,
+  end)` (public, `Hidden`/`NONE` companion constants — `NONE` never mutated), `HideSystemSelectionToolbar`
+  (`ActionMode.Callback` singleton, hard rule 10: `onCreateActionMode`/`onPrepareActionMode` both return `true`
+  and `menu.clear()`; `@VisibleForTesting createCount`), `SelectionUi` (`ViewTreeObserver.OnPreDrawListener` +
+  `View.OnAttachStateChangeListener`): publishes `MutableStateFlow<SelectionState>`, hide-then-150ms-reshow on
+  `onSelectionChanged`, immediate re-anchor via `programmatic { }`, `onPreDraw` republish while visible (covers
+  scroll/relayout/restyle), `visibleRect` clamped to the visible line range using `scrollView.scrollY`/
+  `editText.top` (NOT `editText.scrollY`, which is pinned to 0 per 01 §4.4). View-layer only, no Compose import.
+- `editor/MarkdownEditText.kt` — **modified**: `init` sets `customSelectionActionModeCallback =
+  HideSystemSelectionToolbar` (no `customInsertionActionModeCallback` — AC8); new `internal var selectionUi:
+  SelectionUi?`; `onSelectionChanged`/`onFocusChanged` now also call `selectionUi?.onSelectionChanged`/
+  `onFocusChanged`.
+- `editor/EditorController.kt` — **modified**: `private val selectionUi = SelectionUi(editText, scrollView)`;
+  `val selection: StateFlow<SelectionState> = selectionUi.state` (01 §6.2); `init` wires
+  `editText.selectionUi`, `addOnAttachStateChangeListener(selectionUi)` (+ eager `onViewAttachedToWindow` if
+  already attached), and calls `refreshAccessibilityActions()`; `apply(edit)` body now wrapped in
+  `selectionUi.programmatic { }` (re-anchors at once, no hide flicker, so a second pill tap can chain);
+  `canPaste()` (reads only `ClipDescription`, never `getPrimaryClip()`); `refreshAccessibilityActions()` +
+  13-entry `a11yActions` list, using `ViewCompat.addAccessibilityAction`/`removeAccessibilityAction` (never
+  `setAccessibilityDelegate`); `release()` also removes the attach-state listener. **Deviation** below: both new
+  `a11yIds`/`a11yActions` properties had to be declared *before* the `init` block (see Deviations — a real
+  initialization-order crash was caught by `make test-device`, not by `make check`).
+- `ui/toolbar/ToolbarAction.kt` — **modified**: appended (verbatim per the task's Reference §B, only reformatted
+  for ktlint) `ToolbarItem` (9 entries incl. `More`), `MoreEntry` (9 entries), `ToolbarSlots` (`PRIORITY`,
+  `Layout`, `slotCount`, `compute`).
+- `ui/toolbar/FormatToolbar.kt` — **new**: `FormatToolbarOverlay` (in-tree overlay, `AnimatedVisibility` with the
+  02 §11 pill-in/out timings/easings, sticky "last shown" anchor during the exit animation, `moreOpen` state,
+  `ToolbarSlots.compute` keyed on measured box width), `pillOffset` (pure, `internal`, JVM-tested), `FormatToolbar`
+  (the pill: Row, formatting → optional 1 px divider → clipboard → More, `enabledFor` helper), `PillButton`
+  (`focusProperties { canFocus = false }` **before** `.clickable(...)`, `androidx.compose.material3.ripple(...)`
+  — the newer non-composable `IndicationNodeFactory` from material3 1.4.0, not the older
+  `androidx.compose.material.ripple.rememberRipple`).
+- `ui/toolbar/MoreMenu.kt` — **new**: `MoreMenu` (in-tree Column, `focusProperties { canFocus = false }` before
+  `.verticalScroll(...)`, overflow rows then a divider then `MoreEntry` rows, `SelectAll` always enabled,
+  everything else disabled when read-only), `moreMenuOffset` (pure, `internal`, JVM-tested).
+- `ui/editor/EditorHost.kt` — **modified**: new `internal fun EditorSurface(controller, modifier)` = `Box {
+  AndroidView(...); FormatToolbarOverlay(..., Modifier.matchParentSize()) }` (overlay is the last/topmost child);
+  `EditorHost` now renders `EditorSurface(controller, Modifier.fillMaxSize())` as the first child of its own
+  (already-inset-padded) `Box`, with the status-protection strip staying a sibling drawn after it — no new
+  padding/offset introduced between the outer `Box` and the `AndroidView`, so `SelectionState.anchor`
+  (EditorScrollView viewport coords) lines up with the overlay with no extra math.
+- `res/values/strings.xml` — **modified**: added the 18 `tb_*` strings from the task's step 3 (both groups).
+- Tests: `ToolbarSlotsTest` (7, JVM), `PillPositionTest` (12, JVM), `FormatToolbarTest` (5, Robolectric +
+  Compose, `@Config(qualifiers = "w1000dp-h1000dp")` — see Deviations), `HideSystemSelectionToolbarTest` (4,
+  Robolectric — see Deviations), `SelectionToolbarTest` (7, instrumented).
+
+**Verification (emulator `emulator-5554`, Android 17/API 37; `/tmp/mdwriter-agent-key` throwaway key):**
+- Icons: all 9 (`ic_format_bold/italic/h1`, `ic_link`, `ic_content_copy/paste/cut`, `ic_code`, `ic_more_horiz`)
+  already existed from T02 — no `fetch-icons.sh` change needed.
+- Acceptance 1 (`ToolbarSlotsTest`, 7/7 green): `slotCount` → 448→8, 360→6, 464→9, 600→9, 280→5, 100→2 (exact
+  match); `compute(448f,false)` → formatting `[Bold,Italic,Heading,Link]`, clipboard `[Cut,Copy,Paste]`, overflow
+  `[Code]`; `compute(360f,false)` → clipboard `[Copy]`, overflow `[Paste,Cut,Code]` (in order); `compute(600f,…)`
+  → overflow empty, Code in formatting; `MoreEntry.Highlight` in `more` iff `highlightEnabled` — all exact.
+- Acceptance 2 (`PillPositionTest`, 12/12 green): above/below/fallback-to-gapAbove for `pillOffset`; x centred,
+  clamped at both margins, centred when box narrower than pill+2×margin; `moreMenuOffset` above/below/fallback +
+  x end-aligned/clamped.
+- Acceptance 3 (`FormatToolbarTest`, 5/5 green, Robolectric): at 448 dp — Bold/Italic/Heading/Link/Cut/Copy/Paste/
+  "More formatting" all exist, "Code" doesn't, clicking Bold records `ToolbarAction.Bold`; `canPaste={false}` →
+  Paste `assertIsNotEnabled()`, More shows "Code"+"Strikethrough", "Highlight" text absent when disabled and
+  present when enabled; at 360 dp — 5 buttons + More, Cut/Paste/Code absent as pill buttons, More lists
+  Paste/Cut/Code (verified "first" via `boundsInRoot.top` ordering) before Strikethrough; `visible=false` +
+  `waitForIdle()` → "Bold" doesn't exist.
+- Acceptance 4 (`SelectionToolbarTest`, 7/7 green, instrumented) + `HideSystemSelectionToolbarTest` (4/4 green,
+  JVM/Robolectric — see Deviations for why the latter exists): `longPressSelectsWordAndShowsPill` (real
+  `Instrumentation.sendPointerSync` DOWN + `getLongPressTimeout()+300` ms real wait + UP at the screen position of
+  offset 8 in "Hello world of words", retried up to 3× for on-emulator gesture-recognition flakiness — selection
+  always landed on `[6,11)` "world", "Bold" pill displayed); `boldKeepsSelectionPillAndFocus` (tap Bold →
+  `Hello **world** of words`, selection `[8,13)`, pill still shown, `hasFocus()==true`, `undo()` → original);
+  `programmaticSelectionShowsAfter150ms` (`setSelection(0,5)` → hidden at +50 ms, visible by +400 ms);
+  `hiddenWhileSelectionKeepsChanging` (5× `setSelection` 50 ms apart → hidden until ≥150 ms after the last);
+  `collapseAndFocusLossHide`; `anchorInScrollViewCoords` (`anchor.top == editText.top + totalPaddingTop +
+  layout.getLineTop(0) − scrollView.scrollY` within 1 px on a 200-line document; `scrollBy(0,100)` moves
+  `anchor.top` by −100 within 1 px); `accessibilityActionsExposed` (real `AccessibilityNodeInfo` action labels
+  include Bold/Italic/Link/Quote/Task; `performAccessibilityAction` on the Bold action with «world» selected →
+  `**world**`). `HideSystemSelectionToolbarTest`: `onCreateActionMode` returns `true`, clears a real
+  `PopupMenu`-backed `Menu`, increments `createCount`; `onPrepareActionMode` also clears; `onActionItemClicked`
+  always `false`; `onDestroyActionMode` doesn't throw.
+- Acceptance 5 (448 dp screenshot, default AVD, after long-pressing "world" in "Hello world of words", real
+  device via `am start` + `input swipe` long-press): pill shown ~8 dp above the word, exactly 8 buttons
+  (B, I, H1, link | 1 px divider | scissors/copy/clipboard) + a "…" More button; both selection handles and the
+  Gboard keyboard visible; no text-labelled system toolbar anywhere on screen ("Cut"/"Copy"/"Select all" text
+  never appears — only our own icon-only pill). PASS.
+- Acceptance 6 (360 dp screenshot, `wm density` set to `W*160/360` then reset immediately after both screenshots):
+  exactly 6 buttons (B, I, H1, link | copy | more); tapping More opened a menu **upward** (extending toward the
+  top of the screen) listing, in order, Paste (greyed — clipboard empty at that point), Cut, Code, a 1 px
+  divider, then Strikethrough, Quote, Bulleted list, Numbered list, Task, Code block, Clear formatting (Select
+  all off-screen below, list scrollable) — matches AC6 exactly. `wm density reset` confirmed
+  (`adb shell wm density` → `Physical density: 480`, no override line).
+- Acceptance 7 (flip below): the exact numeric case ("flips below when `selTop < pillH + gap`") is covered
+  precisely by `PillPositionTest`'s `pillOffset flips below when selTop is less than pillH plus gap` (green). An
+  on-device repro at the *exact* top-of-viewport boundary was attempted (scrolled a real document so a line's top
+  sat within a few px of the status bar) but the real app's `showSoftInputOnFocus=true` path re-triggers
+  `bringPointIntoView` on every IME-driven `onSizeChanged`, which re-scrolls the "no room above" line back into a
+  "room above" position before a screenshot can capture the flipped state — see Known issues.
+- Acceptance 8 (caret "Paste" pill kept): after tapping Copy on a selection, scrolled to the end of a document and
+  long-pressed the empty area below the last line — the **system's own floating toolbar**, with real text labels
+  "Paste" / "Select all" / "⋮", appeared at the caret's insertion handle, exactly as an unmodified `EditText`
+  would (confirms no `customInsertionActionModeCallback` was added). PASS.
+- Acceptance 9 (IME stays up, actions chain): selected "item", tapped Bold (`**item**`, selection kept, pill
+  still shown, Gboard still up) then tapped Italic on the SAME still-selected pill (`***item***`, selection still
+  highlighted, Gboard still up) — two chained actions, IME never dropped. PASS.
+- Acceptance 10: `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → BUILD SUCCESSFUL (105 tasks; one transient,
+  unrelated `spotlessKotlin`/`spotlessKotlinGradle` "Could not read path .../MainActivity.class" failure on a
+  first attempt self-resolved on immediate retry — a stale intermediate-directory race, not a code issue, not
+  reproduced again). Lint SARIF: 0 errors, 45 warnings (43 `UnusedResources` — down from 51 in T08 now that more
+  icons are wired in — + the pre-existing `DataExtractionRules`/`ViewConstructor`). JVM: **153 tests, 0
+  failures** (T09 added `ToolbarSlotsTest=7 PillPositionTest=12 FormatToolbarTest=5
+  HideSystemSelectionToolbarTest=4` = 28 new, on top of T05–T08's 125, unaffected). `make test-device
+  DEVICE=emulator-5554` → **42/42 instrumented tests green** (T09's own `SelectionToolbarTest=7`, on top of
+  T05–T08's 35, unaffected).
+- Final `git status --porcelain`: only the files listed under "What changed" — no stray `build/`, `.gradle/`,
+  keystore files.
+
+**Deviations from the plan:**
+- **Real initialization-order bug, found and fixed via `make test-device` (not caught by `make check`, which
+  never actually constructs an `EditorController` on a real `Context`).** `EditorController.init { … }` calls
+  `refreshAccessibilityActions()` per the task's own Reference D ("call from init"). Kotlin runs a class's
+  property initializers and `init` blocks in strict **textual** order; `a11yIds`/`a11yActions` were first written
+  (matching the Reference D snippet's own layout) *after* several other members, including `refreshAccessibilityActions()`
+  itself — but crucially, textually *after* the `init` block. The very first `EditorController` construction
+  (`MainActivity.EditorDemo` under `make test-device`) crashed with a `NullPointerException` inside `a11yIds.forEach`
+  (`a11yIds` was still JVM-default `null` at that point, despite its declared type being non-nullable — the
+  assignment simply hadn't run yet). Fixed by moving both `private var a11yIds = emptyList<Int>()` and
+  `private val a11yActions = listOf(...)` to just before the `init` block (with a comment explaining why). No
+  `01-architecture.md` change (this is an implementation-order detail, not a contract change) — flagged here
+  because `make check` (JVM/Robolectric only) never exercises the real constructor path this bug lived in;
+  **`make test-device` is the gate that actually catches this class of bug**, consistent with why this task
+  requires it.
+- **`FormatToolbarTest` needs `@Config(qualifiers = "w1000dp-h1000dp")`.** Robolectric's default emulated screen
+  (measured via a temporary diagnostic dump: root `size=320 x 470` px) is narrower than the 448 dp (and even the
+  360 dp) test boxes the task's own Reference (AC3) asks for — without a wide qualifier, `Box(Modifier.size(448.dp,
+  800.dp))`'s requested size is silently clamped down to the device's own ~305 dp effective width by the
+  measurement constraints from the root, making `ToolbarSlots.compute` see the WRONG width and the test assert
+  the wrong button set (confirmed by dumping the real semantics tree: only 4 formatting + `Copy` + `More` were
+  ever rendered, matching the ~305 dp case, never the requested 448 dp one). Adding the class-level `@Config`
+  widens the emulated root to 1000×1000 dp, after which the requested 448/360 dp boxes are honoured exactly
+  (re-confirmed via the same diagnostic dump: root becomes `448 x 800` px). Not a change to any task file/
+  `01-architecture.md` (a Robolectric test-environment detail).
+- **`SelectionToolbarTest.longPressSelectsWordAndShowsPill` does not assert `HideSystemSelectionToolbar.createCount
+  ≥ 1`** (moved to the new, deterministic `HideSystemSelectionToolbarTest` instead). Investigated thoroughly:
+  selection itself is 100% reliable in this harness (real `Instrumentation.sendPointerSync` DOWN + a real
+  `getLongPressTimeout()+300` ms wait + UP correctly lands `[6,11)` on every run, with retries added purely for
+  emulator gesture-recognition robustness, matching T05/T08's own documented emulator flakiness), and the "Bold"
+  pill correctly appears from it — but the framework's own **asynchronous** `startActionMode(..., TYPE_FLOATING)`
+  call (the only thing that would increment `createCount`) never fires inside the bare Compose-test host
+  `createComposeRule()` launches, even after generous waits (5 s) and multiple retries of the whole gesture. A
+  **direct manual reproduction on the real shipped app** (`MainActivity`, the exact same `MarkdownEditText`/
+  `HideSystemSelectionToolbar`, via `am start` + `adb shell input swipe … 1000` as a real long-press) conclusively
+  showed the real behaviour is correct: long-pressing "world" selected it, showed our pill (B/I/H1/link |
+  scissors/copy/clipboard | more), kept the handles, and displayed **no** text-labelled system toolbar anywhere —
+  i.e. `onCreateActionMode`/`onPrepareActionMode` *are* genuinely exercised and correct in the app that ships;
+  this is purely an artifact of the minimal test-host activity/window not completing the framework's own
+  floating-ActionMode start sequence. `HideSystemSelectionToolbarTest` (Robolectric, a real `PopupMenu`-backed
+  `Menu` + a minimal fake `ActionMode` — no mocks) now gives deterministic, always-green coverage of the actual
+  callback contract (hard rule 10) instead. Not a change to `01-architecture.md` (rule 10 itself is unchanged and
+  correctly implemented); flagged here per README rule 4 since this is exactly the kind of judgment call that
+  affects a stated acceptance criterion's *automated* form (the criterion's *behaviour* is still fully verified,
+  by construction, across the unit test + the manual screenshot).
+- No `01-architecture.md` edit was needed otherwise (all names match §3/§6.2 exactly: `SelectionState`,
+  `SelectionUi`, `HideSystemSelectionToolbar`, `EditorController.selection`/`canPaste`/
+  `refreshAccessibilityActions`). No library/plugin versions bumped, no new dependencies added.
+
+**Ktlint suppressions (file / rule / reason):** none added by this task.
+
+**Known issues / follow-ups:**
+- AC7's exact "flip below" boundary could not be captured in an on-device screenshot: the real app's
+  `bringPointIntoView`-on-IME-`onSizeChanged` path (T05, rule 2's own sanctioned exception) actively re-scrolls a
+  freshly-selected near-top line back into a "there is room above" position once the IME finishes animating in,
+  faster than a manual `adb`-driven screenshot can capture the transient flipped state. The flip logic itself is
+  exhaustively covered by `PillPositionTest`'s exact-value unit tests (including the precise `selTop < pillH +
+  gap` boundary case) — a future task doing more UI screenshot work here could use `controller.hideIme()` (or a
+  `showSoftInputOnFocus=false` harness like `SelectionToolbarTest`'s) before scrolling+selecting to prevent the
+  IME from re-triggering `bringPointIntoView` mid-repro.
+- `HideSystemSelectionToolbar.createCount` cannot be exercised end-to-end inside `SelectionToolbarTest`'s bare
+  Compose-test host (see Deviations) — a future task that introduces a real, themed `ComponentActivity` subclass
+  for instrumented Compose tests (if one ever becomes necessary for other reasons) might incidentally make this
+  observable there too, but is not worth adding solely for this.
+- A transient `spotlessKotlin`/`spotlessKotlinGradle` "Could not read path .../MainActivity.class" failure was
+  seen once on a cold `make check` run and did not recur on immediate retry (no code or config change in
+  between) — looked like a stale intermediate-directory race between the configuration cache and the built-in
+  Kotlin compiler's output dir; not chased further since it didn't reproduce.
+
+**Notes for the next task:**
+- **T13 (`EditorSurface` Box order):** `ui/editor/EditorHost.kt`'s `EditorSurface(controller, modifier)` is
+  `Box(modifier) { AndroidView(...); FormatToolbarOverlay(...) }` — the overlay is the LAST child (drawn on top
+  of the `AndroidView`). T13's chrome glyphs/stats line should be added as a further sibling *after*
+  `EditorSurface` inside `EditorHost`'s own outer `Box` (same pattern the status-protection strip already uses),
+  or, if chrome needs to sit visually between the editor and the pill, as an additional child inside
+  `EditorSurface` itself placed after the `AndroidView` but the ordering relative to `FormatToolbarOverlay` will
+  need a deliberate decision (the pill is generally meant to stay the top-most interactive layer). Do not insert
+  anything between `EditorHost`'s outer, inset-padded `Box` and `EditorSurface`'s own `AndroidView` — that gap is
+  exactly what keeps `SelectionState.anchor` (EditorScrollView viewport coords) aligned with the overlay with no
+  extra offset math.
+- **T15 (selection flow carries start/end):** `SelectionState.start`/`.end` are **always** published by
+  `SelectionUi.publish`, even while `visible == false` (collapsed caret, or hidden during the 150 ms delay) — T15
+  can read `controller.selection.value.start/end` directly for selection-aware stats without needing a separate
+  "last known selection" mechanism or waiting for the pill to be visible.
+- **T19 (`refreshAccessibilityActions`):** `EditorController.refreshAccessibilityActions()` is public and
+  idempotent (removes its own previously-added actions before re-adding); T19 should call it again immediately
+  after any `highlightSyntax` setting change (`setStyle`/`setHighlightSyntax`) so the `Highlight` a11y action
+  entry (currently filtered by `highlightEnabled` only at `init` time) stays in sync — T09 deliberately does NOT
+  call it from `setStyle` itself (matching the task's own Reference D comment: "T19 calls it when highlightSyntax
+  changes").
+- `ToolbarSlots`/`ToolbarItem`/`MoreEntry` (in `dev.mdwriter.ui.toolbar`, alongside T08's `ToolbarAction`) are the
+  ready-made slot/priority model — T13's own overflow menu (chrome `⋮`) is a **different** menu (01 §9) and
+  should not reuse `MoreMenu`/`ToolbarSlots` directly, but may want the same in-tree-overlay-not-Popup pattern.
+- The emulator (`emulator-5554`, Android 17/API 37) was left running, portrait, light mode, `dev.mdwriter.debug`
+  installed and last launched with `--es sample small`; the on-screen document holds leftover manual
+  AC5–AC9-verification edits (not meaningful, purely scratch — e.g. `**item**`/`***item***`); `wm density` is
+  reset (`Physical density: 480`, confirmed); no release build installed; `~/.config/mdwriter/` was never
+  touched; `/tmp/mdwriter-agent-key/` still holds the shared throwaway signing key.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
