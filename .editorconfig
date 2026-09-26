@@ -16,6 +16,7 @@ compose_allowed_composition_locals = LocalWriterColors,LocalWriterTypography
 ktlint_code_style = ktlint_official
 ktlint_function_naming_ignore_when_annotated_with = Composable
 max_line_length = 120
+ktlint_standard_if-else-wrapping = disabled
 
 [*.{yml,yaml,json,toml,xml}]
 indent_size = 2
