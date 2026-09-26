@@ -81,6 +81,15 @@ public class MarkdownHighlighter(
     private val enableFrontMatter: Boolean = true,
 ) {
     private var text: CharSequence = ""
+
+    // Mirrors `text.length`, maintained by this class's own arithmetic rather than re-read from `text` at
+    // guard-check time: `text` is a REFERENCE to the caller's own CharSequence (see `currentText`'s KDoc), and a
+    // real editor passes the SAME mutable Editable on every call (TextWatcher.onTextChanged's `s` is not a fresh
+    // snapshot) — by the time a later `update()` call runs, `text.length` already reflects that call's own
+    // (already-applied) edit, not "the length as of the end of the previous update()". Comparing against a
+    // separately tracked Int avoids that aliasing trap; see `plans/STATUS.md` T07 for the incident this fixed
+    // (every keystroke after the first was silently falling back to a full rescan).
+    private var textLength: Int = 0
     private val lineStarts = IntList()
     private val entry = ArrayList<LineState?>()
     private val lineSpans = ArrayList<ArrayList<MdSpan>>() // offsets RELATIVE to line start
@@ -104,7 +113,7 @@ public class MarkdownHighlighter(
      * Absolute end offset of line [i], exclusive of its trailing `'\n'` (or [currentText]'s length for
      * the last line).
      */
-    public fun lineEnd(i: Int): Int = if (i + 1 < lineStarts.size) lineStarts[i + 1] - 1 else text.length
+    public fun lineEnd(i: Int): Int = if (i + 1 < lineStarts.size) lineStarts[i + 1] - 1 else textLength
 
     /** The text of the last scan (the highlighter keeps a reference, it does not copy). */
     public val currentText: CharSequence get() = text
@@ -112,6 +121,7 @@ public class MarkdownHighlighter(
     /** Full (re)highlight. */
     public fun fullScan(newText: CharSequence): HighlightDelta {
         text = newText
+        textLength = newText.length
         lineStarts.clear()
         entry.clear()
         lineSpans.clear()
@@ -138,7 +148,7 @@ public class MarkdownHighlighter(
         fullScan(newText)
     }
 
-    private fun fullDelta() = HighlightDelta(0, lineStarts.size, 0, text.length, full = true)
+    private fun fullDelta() = HighlightDelta(0, lineStarts.size, 0, textLength, full = true)
 
     /**
      * Incremental update for a known edit (e.g. from `TextWatcher.onTextChanged(s, start, before, count)`):
@@ -154,7 +164,7 @@ public class MarkdownHighlighter(
         addedLen: Int,
     ): HighlightDelta {
         if (lineStarts.size == 0 || changeStart < 0 || removedLen < 0 || addedLen < 0 ||
-            changeStart + removedLen > text.length || newText.length != text.length - removedLen + addedLen
+            changeStart + removedLen > textLength || newText.length != textLength - removedLen + addedLen
         ) {
             return fullScan(newText)
         }
@@ -162,6 +172,7 @@ public class MarkdownHighlighter(
             addedLen == 0
         ) {
             text = newText
+            textLength = newText.length
             lastRescannedLines = 0
             return HighlightDelta(0, 0, 0, 0, false)
         }
@@ -179,6 +190,7 @@ public class MarkdownHighlighter(
             p == newText.length
         ) {
             text = newText
+            textLength = newText.length
             lastRescannedLines = 0
             return HighlightDelta(0, 0, 0, 0, false)
         }
@@ -225,6 +237,7 @@ public class MarkdownHighlighter(
         spliceLists(first, oldCount, newCount)
         entry[first] = keepEntry
         text = newText
+        textLength = newText.length
         // restart at the beginning of the enclosing block
         var r = first
         while (r > 0) {
