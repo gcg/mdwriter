@@ -3,9 +3,17 @@
 
     <!-- Deliberately NO <uses-permission> at all: no INTERNET, no storage (01-architecture §1, HARD RULE 1). -->
 
+    <!--
+      How to turn backup off (T11 pitfalls): allowBackup="false" stops only cloud backup. At targetSdk >= 31,
+      device-to-device transfer still follows data_extraction_rules.xml. To stop both, replace every <include>
+      in both sections of res/xml/data_extraction_rules.xml with <exclude domain="root" path="."/> plus the same
+      exclude for file/database/sharedpref/external. `.trash/`, noBackupFilesDir (recovery) and the cache are
+      never backed up either way (platform §2.13).
+    -->
     <application
         android:name=".MdWriterApp"
         android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
