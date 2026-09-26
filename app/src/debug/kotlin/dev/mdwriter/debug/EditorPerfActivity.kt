@@ -35,6 +35,10 @@ import kotlin.math.roundToInt
  * `vary` (cycle insert/delete variants instead of a plain `"a"` insert every time), `verifyLayout` (after the
  * scripted edits, compare the live [android.text.Layout] against one produced by [dev.mdwriter.editor.MarkdownEditText.reflowAll]),
  * `mdEditable` (default `true`; `false` disables [MdEditableFactory] for the A/B comparison, Acceptance 7).
+ *
+ * T08 additions (for `EditorTestHost`'s instrumented tests, which need an arbitrary starting document rather
+ * than one of [SampleDocs]'s fixed samples): `text` (a literal string; overrides `sample` when present),
+ * `selection` (initial caret offset; default = `text.length`), `readOnly` (default `false`).
  */
 class EditorPerfActivity : ComponentActivity() {
     lateinit var controller: EditorController
@@ -69,15 +73,18 @@ class EditorPerfActivity : ComponentActivity() {
         controller.editText.showSoftInputOnFocus = false
 
         val sampleExtra = intent.getStringExtra("sample")
-        val text = SampleDocs.forExtra(sampleExtra) ?: ""
+        val literalText = intent.getStringExtra("text")
+        val text = literalText ?: SampleDocs.forExtra(sampleExtra) ?: ""
         val label = sampleExtra ?: "custom"
         val perfEdits = intent.getIntExtra("perfEdits", DEFAULT_EDITS)
         val vary = intent.getBooleanExtra("vary", false)
         val verifyLayout = intent.getBooleanExtra("verifyLayout", false)
+        val selection = intent.getIntExtra("selection", if (literalText != null) text.length else text.length / 2)
+        val readOnly = intent.getBooleanExtra("readOnly", false)
 
         lifecycleScope.launch {
             controller.install(
-                InstallRequest(text = text, selection = text.length / 2, scrollY = 0, readOnly = false),
+                InstallRequest(text = text, selection = selection, scrollY = 0, readOnly = readOnly),
             )
             controller.editText.doOnNextLayout {
                 val et = controller.editText
