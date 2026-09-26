@@ -209,3 +209,130 @@ build on — don't redeclare them:
   T02's checks) — `~/.config/mdwriter/` was never touched.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T03 — Markdown highlighter port + full test suite (`:core:markdown`) — DONE — 2026-09-26
+**What changed:**
+- Deleted T01's placeholders: `core/markdown/src/main/kotlin/dev/mdwriter/markdown/ModuleInfo.kt` and
+  `core/markdown/src/test/kotlin/dev/mdwriter/markdown/ModuleInfoTest.kt`.
+- Ported the 3 verified main sources from `plans/reference/markdown/` verbatim apart from the package line
+  (`mdwriter.markdown` → `dev.mdwriter.markdown`), reformatting, and KDoc: `MdModel.kt`, `InlineScanner.kt`
+  (`internal`, unchanged), `MarkdownHighlighter.kt`. `setText(CharSequence)` kept as a public alias of
+  `fullScan` (KDoc "Same as [fullScan]"), used by the ported test harnesses.
+- Copied test resources byte-identical (`cmp`-verified) from `plans/reference/markdown/test/resources/`:
+  `spec-cases.txt`, `spec-0.31.2.json`, `specseed.md`.
+- Ported `HighlighterCases.kt` (50 curated cases `HIGHLIGHTER_CASES` + 7 `TYPING_CASES`) verbatim (only the
+  package line + `@file:Suppress("ktlint:standard:max-line-length")` header added; every expected string
+  byte-identical — verified by stripping whitespace/trailing-commas from both files and diffing, see
+  Verification). ktlint's own argument-list-wrapping reformatted the `HlCase(...)`/`TypingCase(...)` call
+  sites onto multiple lines (data untouched).
+- New test files (`core/markdown/src/test/kotlin/dev/mdwriter/markdown/`): `TestResources.kt`
+  (`resourceText(name)` classpath reader), `HighlighterCasesTest.kt` (2 `@TestFactory`s, ported from
+  `CasesCheck.kt`), `SpecOracle.kt` (verbatim `exts`/`cm`/`Key`/`oracle`/`ours` from `Harness.kt`, wrapped in
+  `internal object SpecOracle`, `setText`→`fullScan`), `SpecDifferentialTest.kt` (652-example differential +
+  50-case curated-vs-oracle check), `IncrementalFuzzTest.kt` (seed 7 × 3,000 edits, alternates both `update`
+  overloads, alphabet copied verbatim from `Harness.kt`), `PathologicalTimingTest.kt` (the 14 `Patho.kt`
+  inputs copied verbatim, 20,000 reps, 500 ms bound, with a 500-rep JIT warm-up pass), `HighlighterApiTest.kt`
+  (line lookup, `spansForLines` absolute+exclusive, `headings()`, `isFenceUnclosed`, `HighlightDelta`, and the
+  no-`android.*`-import guard — one `@Test` each instead of the task sketch's single method, same assertions).
+- KDoc added/expanded on all public API in `MdModel.kt` (`MdSpan`, `HighlightDelta.isEmpty`) and
+  `MarkdownHighlighter.kt` (class doc now states thread-confinement — "not thread-safe; keeps a reference to
+  the text; main-thread only after install" — UTF-16 offsets, `'\n'` as the only line break; plus
+  `lineCount`, `lineStart`, `lineEnd`, `update` (4-arg), `lineIndexOf`, `spansForLines` (states `endLine`
+  exclusive + absolute offsets), `lineInfo`, `lineInfoAt`, `setText`). `HighlightDelta.full`'s meaning was
+  already documented in `MdModel.kt` from the reference.
+- Formatting-only edits to the ported main sources beyond ktlint's own automatic reformatting (semicolon
+  splitting, argument/parameter wrapping, trailing commas): 4 hand-wraps of lines that would otherwise exceed
+  120 columns after reformatting (`InlineScanner.kt` one `when`-branch condition list;
+  `MarkdownHighlighter.kt` `isFenceUnclosed`'s condition and two trailing end-of-line comments moved above
+  their statement). No logic changed in any of the 3 files — see Verification.
+
+**Verification:**
+- Baseline (step 1): `make test` green before porting, `core/markdown/build/test-results/test/TEST-dev.mdwriter.markdown.ModuleInfoTest.xml` → `tests="1" failures="0"`.
+- `grep -n '^package' core/markdown/src/main/kotlin/dev/mdwriter/markdown/*.kt` → all three
+  `package dev.mdwriter.markdown`. `./gradlew :core:markdown:compileKotlin --warning-mode all` → BUILD
+  SUCCESSFUL, **zero** compiler warnings (Kotlin 2.4.20 vs. the reference's 2.3.10 — no mechanical fixes
+  needed).
+- `./gradlew :core:markdown:test --rerun` → BUILD SUCCESSFUL. Test counts
+  (`grep -ho 'testsuite name="[^"]*" tests="[0-9]*" skipped="[0-9]*" failures="[0-9]*" errors="[0-9]*"' core/markdown/build/test-results/test/TEST-*.xml`):
+  - `HighlighterCasesTest tests="57" failures="0" errors="0"` (Acceptance 1).
+  - `SpecDifferentialTest tests="2" failures="0" errors="0"` (Acceptance 2). Exact numbers captured via a
+    temporary debug `println` (added, verified, then reverted — `diff` against a pre-edit backup confirmed
+    the revert was clean): **total=652 agree=641 failures=[6, 193, 195, 196, 198, 217, 259, 541, 571, 602,
+    606]** — exactly the reference README's 641/652 and the 11 pinned ids, no new disagreements.
+  - `IncrementalFuzzTest tests="1" failures="0" errors="0"` (Acceptance 3). Exact numbers via the same
+    temporary-println-then-revert technique: **rounds=3000 spanMismatches=0 lineInfoMismatches=0
+    changesOutsideDelta=0** — the reference's 0/0/0, both `update` overloads exercised (`r % 2`).
+  - `PathologicalTimingTest tests="14" failures="0" errors="0"` (Acceptance 4): all 14 `Patho.kt` inputs at
+    20,000 reps, each < 500 ms, after a 500-rep warm-up pass.
+  - `HighlighterApiTest tests="6" failures="0" errors="0"` (Acceptance 5), including
+    `noAndroidImportsInMainSources`.
+- `grep -rn 'import android' core/markdown/src` → only the string literal inside
+  `HighlighterApiTest.noAndroidImportsInMainSources` itself (the guard's own search text), zero real imports
+  (Acceptance 6).
+- Acceptance 7 (only formatting changed): `git diff --no-index -w --word-diff` reviewed for all 3 main files
+  — the only differences are the package line, line breaks, dropped `;`, trailing commas, KDoc/comments, and
+  ktlint's automatic if/else brace-insertion when it splits a `;`-joined one-liner into a block (a mechanical,
+  semantics-preserving transform, not a hand edit). Additionally verified `HighlighterCases.kt` byte-for-byte
+  on content: `diff <(tail -n +2 reference | tr -d ' \t\n') <(tail -n +4 ported | sed 's/,)/)/g' | tr -d ' \t\n')`
+  → identical. `spec-cases.txt` `cmp`-identical to the reference. **Reviewed: only formatting.**
+- `make format && ./gradlew :core:markdown:test && ./gradlew spotlessCheck` → all BUILD SUCCESSFUL, no further
+  changes on a second `make format` run (idempotent) (Acceptance 8, first half).
+- `time ./gradlew :core:markdown:test --rerun` → **2.87 s** total wall time (well under the 30 s budget)
+  (Acceptance 8, second half).
+- `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → BUILD SUCCESSFUL (105 tasks; includes `:app:assembleRelease`
+  R8/lint/tests) (Acceptance 9). No emulator was used; `make install` was never run.
+- Final `git status --porcelain`: only the files listed under "What changed" (3 main sources, 8 test files, 3
+  resources added; 2 T01 placeholders deleted; `.editorconfig` modified) — no stray `build/`, `.gradle/`,
+  `*.jks` or keystore files.
+
+**Deviations from the plan:**
+- `.editorconfig`: added `ktlint_standard_if-else-wrapping = disabled` to the existing `[*.{kt,kts}]` section.
+  Reason: `MarkdownHighlighter.kt`'s dense scanner code (per the reference README, "the code uses compact
+  one-liners") contains **17** single-line `if (cond) { a; b } else c` / `if (cond) a else { b; c }` forms
+  that ktlint_official's `if-else-wrapping` rule flags as "cannot be auto-corrected" (would require rewriting
+  each into a multi-line braced if/else — a structural rewrite of ported logic, not formatting, and this
+  crosses the task's own ~10-occurrence threshold for an `.editorconfig` change). Empirically, a
+  directory-scoped section (`[core/markdown/src/main/kotlin/dev/mdwriter/markdown/*.kt]`, and separately
+  `[core/markdown/**]`) did **not** take effect through Spotless's ktlint integration — same quirk T02
+  recorded for the compose-rules compositionlocal-allowlist property, but this time affecting a *built-in*
+  ktlint rule too (T02 had only observed it for a custom `EditorConfigProperty`). Only setting the property
+  in the existing language-wide `[*.{kt,kts}]` section (or `[*]`) actually suppressed it. Confirmed via
+  standalone `ktlint` (same version 1.8.0 the build uses) run from inside the repo (so the real
+  `.editorconfig` resolves): with the rule disabled, `ktlint -F` fully auto-formats every occurrence into
+  proper multi-line braced if/else (no manual bracing needed) — `InlineScanner.kt` needed **zero** manual
+  if/else edits despite initially looking like it might need them (its one `'!' -> if (...) {...} else i + 1`
+  branch turned out not to trigger the rule at all once fully reformatted). 01-architecture.md was not
+  touched (this is a lint-config detail, not an architecture contract).
+- No other deviations. No library/plugin versions bumped, no new dependencies. `InlineScanner`, `Mode`,
+  `LineState`, `IntList` stayed `internal` as specified.
+
+**Ktlint suppressions (file / rule / reason):**
+- `core/markdown/src/test/kotlin/dev/mdwriter/markdown/HighlighterCases.kt` — file-level
+  `@Suppress("ktlint:standard:max-line-length")` — required by the task (step 4): this file is test data
+  copied verbatim; the expected-span/expected-line strings must never be hand-wrapped or edited.
+- `.editorconfig` `[*.{kt,kts}]` — `ktlint_standard_if-else-wrapping = disabled` (module-wide, not just
+  `:core:markdown` — see Deviations above for why a narrower scope didn't work) — 17 pre-existing compact
+  if/else one-liners in the ported `MarkdownHighlighter.kt` that are "cannot be auto-corrected" under
+  ktlint_official; disabling avoids a structural rewrite of ported logic. No other rule needed >1-2
+  suppressions; no per-declaration `@Suppress` was used in the 3 main files.
+
+**Known issues / follow-ups:** none.
+
+**Notes for the next task:** T04 adds `SmartEdit.kt`, `TextStats.kt`, `MarkdownHtml.kt`, `DocTitle.kt` (+
+`MarkupStrip.kt`) into this same `dev.mdwriter.markdown` package, alongside the files this task added — don't
+recreate `MdModel.kt`/`InlineScanner.kt`/`MarkdownHighlighter.kt`. Useful surface for T04/T05/T06:
+- `MarkdownHighlighter(enableHighlight: Boolean = true, enableFrontMatter: Boolean = true)`: `fullScan`,
+  `update(text, changeStart, removedLen, addedLen)` (the O(1)-amortized path — prefer this in the editor over
+  the O(n) diffing `update(text)` overload, per §6.1/§7), `setText` (alias of `fullScan`, kept only for the
+  ported harnesses — new call sites should use `fullScan`), `spans()`, `spansForLines(from, toExcl)`
+  (absolute offsets, `endLine` exclusive), `lineInfo`/`lineInfoAt`/`lineIndexOf`/`lineStart`/`lineEnd`/
+  `lineCount`, `headings()`, `isFenceUnclosed(line)`.
+- Not thread-safe and keeps a reference to the text (see the class KDoc) — construct/scan off-main for a
+  freshly opened document, then hand it to the main-thread-only editor per §7/§8.
+- `MdKind` has 37 members (`isMarker` flag); `MdSpan.toString()` format is `KIND(arg)[start,end)` (arg omitted
+  when 0) — this exact format is asserted throughout the test suite, so don't change `MdSpan.toString()`
+  without re-checking every `expectedSpans` string in `HighlighterCases.kt`.
+- `.editorconfig` now disables `ktlint_standard_if-else-wrapping` module-wide (see Deviations) — a task adding
+  compact one-liner Kotlin elsewhere should not rely on this rule catching mixed if/else bracing.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
