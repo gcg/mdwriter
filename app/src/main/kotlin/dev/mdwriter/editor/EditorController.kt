@@ -2,8 +2,10 @@ package dev.mdwriter.editor
 
 import android.content.Context
 import android.os.SystemClock
+import android.text.Selection
 import android.text.Spanned
 import android.view.WindowInsets
+import android.view.inputmethod.BaseInputConnection
 import android.widget.TextView
 import androidx.core.view.doOnNextLayout
 import androidx.core.view.doOnPreDraw
@@ -13,12 +15,19 @@ import dev.mdwriter.editor.spans.PaintTextMeasurer
 import dev.mdwriter.editor.spans.SpanFactory
 import dev.mdwriter.editor.spans.SpanMaterializer
 import dev.mdwriter.markdown.MarkdownHighlighter
+import dev.mdwriter.markdown.SmartEdit
+import dev.mdwriter.markdown.TextEdit
+import dev.mdwriter.ui.toolbar.ToolbarAction
+import dev.mdwriter.ui.toolbar.isInlineWrap
 import dev.mdwriter.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 
 /** Text + selection + scroll position to install; `readOnly` only sets `showSoftInputOnFocus` here (T08 enforces it). */
@@ -82,9 +91,43 @@ class EditorController(
     /** `true` once the restyler has consumed every dirty line — main-thread harness/test helper only. */
     internal val isRestyleIdle: Boolean get() = restyler.isIdle
 
+    private val mdUndo = MdUndoManager(editText).also { it.onChanged = ::updateUndoFlows }
+
+    private val smartInput = SmartInput(editText, { highlighter }, mdUndo, ::apply)
+
+    private val commandsImpl =
+        object : EditorCommands {
+            override fun perform(action: ToolbarAction) = this@EditorController.perform(action)
+
+            override fun undo() = this@EditorController.undo()
+
+            override fun redo() = this@EditorController.redo()
+
+            override fun toggleTaskAt(offset: Int) = this@EditorController.toggleTaskAt(offset)
+        }
+
+    private val _canUndo = MutableStateFlow(false)
+    val canUndo: StateFlow<Boolean> = _canUndo.asStateFlow()
+    private val _canRedo = MutableStateFlow(false)
+    val canRedo: StateFlow<Boolean> = _canRedo.asStateFlow()
+
+    /** The highlighter's own flag (T04's `==mark==` extension is opt-in). */
+    val highlightEnabled: Boolean get() = style.highlightSyntax
+
+    val isReadOnly: Boolean get() = editText.readOnly
+
     init {
         scrollView.onGeometryChanged = { syncHangRoom() }
         editText.addTextChangedListener(restyler)
+        editText.addTextChangedListener(mdUndo) // AFTER the restyler's (rule: restyle reacts to the same edits)
+        editText.mdUndo = mdUndo
+        editText.smartInput = smartInput
+        editText.commands = commandsImpl
+    }
+
+    private fun updateUndoFlows() {
+        _canUndo.value = mdUndo.canUndo
+        _canRedo.value = mdUndo.canRedo
     }
 
     /** Main thread; builds the styled text off-main, then a single `setText` installs it. */
@@ -104,12 +147,14 @@ class EditorController(
                 )
             }
         val t1 = SystemClock.uptimeMillis()
-        editText.setText(ssb, TextView.BufferType.EDITABLE) // factory copies into MdEditable
+        mdUndo.ignoring { editText.setText(ssb, TextView.BufferType.EDITABLE) } // factory copies into MdEditable
         highlighter = hl // explicit hand-off: Default -> main, no concurrent use (01 §6.1)
         restyler.highlighter = hl
         restyler.reset(editText.length())
         version++ // loading is not a user edit: no EditEvent
         restyler.suspended = false
+        editText.readOnly = doc.readOnly
+        mdUndo.clear()
         editText.setSelection(doc.selection.coerceIn(0, editText.length()))
         editText.showSoftInputOnFocus = !doc.readOnly
         scrollView.doOnNextLayout { scrollView.scrollTo(0, doc.scrollY) }
@@ -118,6 +163,73 @@ class EditorController(
                 "OPEN|chars=${doc.text.length}|build=${t1 - t0}|firstFrame=${SystemClock.uptimeMillis() - t0}"
             }
         }
+    }
+
+    /** One undo step, one batch edit, selection taken from the edit itself. A no-op on a read-only document. */
+    fun apply(edit: TextEdit) {
+        val ed = editText.text ?: return
+        if (editText.readOnly) return
+        val m = edit.minimize(ed)
+        mdUndo.hardBreak()
+        editText.beginBatchEdit()
+        try {
+            mdUndo.group {
+                val cs = BaseInputConnection.getComposingSpanStart(ed)
+                val ce = BaseInputConnection.getComposingSpanEnd(ed)
+                if (cs != -1 && cs <= m.end && ce >= m.start) BaseInputConnection.removeComposingSpans(ed)
+                ed.replace(m.start, m.end, m.replacement)
+                Selection.setSelection(ed, m.selStart.coerceIn(0, ed.length), m.selEnd.coerceIn(0, ed.length))
+            }
+        } finally {
+            editText.endBatchEdit()
+        }
+    }
+
+    /** Formatting/clipboard commands (01 §6.2). A no-op on a read-only document (except select-all, which never
+     * mutates text). */
+    fun perform(action: ToolbarAction) {
+        when (action) {
+            ToolbarAction.Cut -> {
+                editText.onTextContextMenuItem(android.R.id.cut)
+            }
+
+            ToolbarAction.Copy -> {
+                editText.onTextContextMenuItem(android.R.id.copy)
+            }
+
+            ToolbarAction.Paste -> {
+                editText.onTextContextMenuItem(android.R.id.paste)
+            }
+
+            ToolbarAction.SelectAll -> {
+                editText.onTextContextMenuItem(android.R.id.selectAll)
+            }
+
+            else -> {
+                if (editText.readOnly || (action == ToolbarAction.Highlight && !highlightEnabled)) return
+                val a = minOf(editText.selectionStart, editText.selectionEnd).coerceAtLeast(0)
+                val b = maxOf(editText.selectionStart, editText.selectionEnd)
+                // Inline wraps (not Code: codeToggle decides fence-vs-inline itself) are no-ops on a verbatim line.
+                if (action.isInlineWrap && highlighter?.lineInfoAt(a)?.type?.isVerbatim == true) return
+                FormatCommands.edit(action, snapshot(), a, b, highlightEnabled)?.let(::apply)
+            }
+        }
+    }
+
+    /** Tapping a `[ ]`/`[x]` marker ([MarkdownEditText.onTouchEvent]); a no-op on a read-only document via [apply]. */
+    fun toggleTaskAt(offset: Int) {
+        val e = SmartEdit.toggleTask(snapshot(), offset) ?: return
+        apply(e.copy(selStart = editText.selectionStart, selEnd = editText.selectionEnd))
+    }
+
+    fun undo() {
+        if (editText.readOnly) return
+        mdUndo.undo()
+    }
+
+    fun redo() {
+        if (editText.readOnly) return
+        mdUndo.redo()
     }
 
     /** Theme/font/size/line-length/highlightSyntax change (T19 policy): colours/typeface/geometry are read live
@@ -185,5 +297,6 @@ class EditorController(
 
     fun release() {
         scrollView.onGeometryChanged = null
+        editText.removeTextChangedListener(mdUndo)
     }
 }
