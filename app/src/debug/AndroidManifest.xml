@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Debug-only perf harness (T07): no intent filter, launched directly by package/class name from the
+         Makefile/verification commands (`am start -n dev.mdwriter.debug/dev.mdwriter.debug.EditorPerfActivity`). -->
+    <application>
+        <activity
+            android:name="dev.mdwriter.debug.EditorPerfActivity"
+            android:exported="true" />
+    </application>
+</manifest>

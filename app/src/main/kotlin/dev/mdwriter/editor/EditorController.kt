@@ -15,6 +15,10 @@ import dev.mdwriter.editor.spans.SpanMaterializer
 import dev.mdwriter.markdown.MarkdownHighlighter
 import dev.mdwriter.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.withContext
 
 /** Text + selection + scroll position to install; `readOnly` only sets `showSoftInputOnFocus` here (T08 enforces it). */
@@ -23,6 +27,11 @@ data class InstallRequest(
     val selection: Int,
     val scrollY: Int,
     val readOnly: Boolean,
+)
+
+/** One text change (typing, IME, undo, toolbar edit) — never emitted for [EditorController.install] itself. */
+data class EditEvent(
+    val version: Long,
 )
 
 /**
@@ -44,16 +53,43 @@ class EditorController(
 
     private val hangRoom = HangRoomSpan(style)
 
-    /** Main thread only, after [install]; `null` before the first install. T07 reads this to drive its reconcile. */
+    /** Main thread only, after [install]; `null` before the first install. [Restyler] reads this to drive its reconcile. */
     internal var highlighter: MarkdownHighlighter? = null
         private set
 
+    /** Tracks [EditorStyle.highlightSyntax] across [setStyle] calls: the flag is baked into the highlighter's
+     * constructor, so a flip needs a brand-new [MarkdownHighlighter] (see [setStyle]) — `style` itself is one
+     * mutable, shared instance (mutated in place by callers before they call [setStyle]), so it can't be diffed
+     * against its own field for this. */
+    private var lastHighlightSyntax = initialStyle.highlightSyntax
+
+    private val _edits =
+        MutableSharedFlow<EditEvent>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** One [EditEvent] per text change (typing, IME, undo, toolbar) — [install] bumps [version] but never emits here. */
+    val edits: SharedFlow<EditEvent> = _edits.asSharedFlow()
+
+    /** +1 on every text change AND on [install] (the autosave baseline, T11). */
+    var version: Long = 0
+        private set
+
+    private val restyler =
+        Restyler(editText, scrollView, style) {
+            version++
+            _edits.tryEmit(EditEvent(version))
+        }
+
+    /** `true` once the restyler has consumed every dirty line — main-thread harness/test helper only. */
+    internal val isRestyleIdle: Boolean get() = restyler.isIdle
+
     init {
         scrollView.onGeometryChanged = { syncHangRoom() }
+        editText.addTextChangedListener(restyler)
     }
 
     /** Main thread; builds the styled text off-main, then a single `setText` installs it. */
     suspend fun install(doc: InstallRequest) {
+        restyler.suspended = true
         val t0 = SystemClock.uptimeMillis()
         val gutter = style.gutterPx
         val hl = MarkdownHighlighter(enableHighlight = style.highlightSyntax, enableFrontMatter = true)
@@ -70,6 +106,10 @@ class EditorController(
         val t1 = SystemClock.uptimeMillis()
         editText.setText(ssb, TextView.BufferType.EDITABLE) // factory copies into MdEditable
         highlighter = hl // explicit hand-off: Default -> main, no concurrent use (01 §6.1)
+        restyler.highlighter = hl
+        restyler.reset(editText.length())
+        version++ // loading is not a user edit: no EditEvent
+        restyler.suspended = false
         editText.setSelection(doc.selection.coerceIn(0, editText.length()))
         editText.showSoftInputOnFocus = !doc.readOnly
         scrollView.doOnNextLayout { scrollView.scrollTo(0, doc.scrollY) }
@@ -80,13 +120,25 @@ class EditorController(
         }
     }
 
-    /** Theme/font/size/line-length/highlightSyntax change (T07 restyles; T19 policy): colours/typeface/geometry
-     * are read live by every span, so this only needs to re-derive geometry and force one full reflow. */
+    /** Theme/font/size/line-length/highlightSyntax change (T19 policy): colours/typeface/geometry are read live
+     * by every span, so this only needs to re-derive geometry, force one full reflow, and (T07) restyle every
+     * line — [dev.mdwriter.editor.spans.HeadingHangSpan]/[dev.mdwriter.editor.spans.HangingIndentSpan] widths are
+     * baked in at reconcile time from the CURRENT style, so a font/size change needs new span objects, not just a
+     * relayout. A [EditorStyle.highlightSyntax] flip additionally needs a brand-new [MarkdownHighlighter]
+     * (the flag is fixed at its construction) that is `fullScan`ned before it is handed to the restyler. */
     fun setStyle(s: EditorStyle) {
         editText.applyColors(s.colors)
         editText.typeface = s.fonts.regular
-        scrollView.applyGeometry() // also invokes syncHangRoom via onGeometryChanged
+        scrollView.applyGeometry() // also invokes syncHangRoom via onGeometryChanged (marks everything dirty too)
         editText.reflowAll()
+        if (s.highlightSyntax != lastHighlightSyntax) {
+            lastHighlightSyntax = s.highlightSyntax
+            val hl = MarkdownHighlighter(enableHighlight = s.highlightSyntax, enableFrontMatter = true)
+            editText.text?.let { hl.fullScan(it) }
+            highlighter = hl
+            restyler.highlighter = hl
+        }
+        restyler.markAllDirty()
     }
 
     /** Keeps the whole-document [HangRoomSpan] in sync with the current gutter (≥ 600 dp only, 02 §3). */
@@ -100,6 +152,7 @@ class EditorController(
             e.removeSpan(hangRoom)
         }
         editText.reflowAll() // width changes already relayout; this makes a NEW gutter value take effect
+        restyler.markAllDirty() // hang/indent widths are measured at the OLD width until every span is redone
     }
 
     fun snapshot(): String = editText.text.toString()
