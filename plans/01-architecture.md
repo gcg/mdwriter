@@ -98,7 +98,7 @@ app/src/main/kotlin/dev/mdwriter/
     find/                 FindBar.kt
   data/
     storage/              DocumentStore.kt, InternalStore.kt, SafTreeStore.kt, AtomicWriter.kt, TextCodec.kt,
-                          RecoveryStore.kt, StorageError.kt, NoteFiles.kt, Hashes.kt, TrashBin.kt [T10],
+                          RecoveryStore.kt, StorageError.kt, NoteFiles.kt [T10], Hashes.kt [T10], TrashBin.kt [T10],
                           ExternalDocStore.kt [T18]; T14 adds SafIo.kt, TreeGrants.kt, LocationInfo.kt, LinkFolderLauncher.kt
     library/              Location.kt (LocationId, DocRef, FolderRef, DocKey), LibraryEntry.kt, LibraryRepository.kt,
                           Excerpt.kt (one-line delegate to DocTitle.excerpt) [T12]
@@ -264,13 +264,15 @@ fun DocRef.key(): DocKey
 
 data class FileStat(val lastModified: Long?, val size: Long?)
 data class LibraryEntry(val name: String, val isFolder: Boolean, val doc: DocRef?, val folder: FolderRef?,
-                        val lastModified: Long?, val size: Long?, val excerpt: String?)
+                        val lastModified: Long?, val size: Long?, val excerpt: String?,
+                        val caps: EntryCaps = EntryCaps.ALL)   // caps: T10 addition
 
 interface DocumentStore {                       // implemented by InternalStore and SafTreeStore
     suspend fun list(folder: FolderRef): List<LibraryEntry>
     suspend fun read(ref: DocRef): ByteArray
     suspend fun write(ref: DocRef, bytes: ByteArray)         // atomic (internal) / "wt" + verify (SAF)
     suspend fun stat(ref: DocRef): FileStat?                 // null = gone
+    suspend fun displayName(ref: DocRef): String             // T10 addition: name incl. extension
     suspend fun create(folder: FolderRef, displayName: String): DocRef
     suspend fun createFolder(parent: FolderRef, name: String): FolderRef
     suspend fun rename(ref: DocRef, newDisplayName: String): DocRef   // ALWAYS use the returned ref afterwards
@@ -279,7 +281,9 @@ interface DocumentStore {                       // implemented by InternalStore 
     suspend fun move(ref: DocRef, to: FolderRef): DocRef
     fun changes(folder: FolderRef): Flow<Unit>               // best-effort change notifications
 }
+data class TrashToken(val original: DocRef, val displayName: String, val trashId: String)   // T10 addition
 sealed interface StorageError { NotFound; PermissionLost; ReadOnly; TooLarge(bytes); Encoding; ProviderFailure(cause) }
+class StorageException(val error: StorageError, cause: Throwable? = null) : java.io.IOException  // T10 addition: stores throw this
 ```
 - All store I/O runs on `Dispatchers.IO`. Writes to one document are serialized with a per-document `Mutex`.
 - `DocumentRepository.load(ref): LoadedDocument(text, baseline: FileStat, format: TextFormat, readOnly)` and
