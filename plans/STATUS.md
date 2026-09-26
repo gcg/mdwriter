@@ -336,3 +336,124 @@ recreate `MdModel.kt`/`InlineScanner.kt`/`MarkdownHighlighter.kt`. Useful surfac
   compact one-liner Kotlin elsewhere should not rely on this rule catching mixed if/else bracing.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T04 — SmartEdit additions, TextStats, MarkdownHtml, DocTitle — DONE — 2026-09-26
+**What changed:**
+- Ported `SmartEdit.kt`, `TextStats.kt`, `MarkdownHtml.kt` from `plans/reference/markdown/` into
+  `core/markdown/src/main/kotlin/dev/mdwriter/markdown/` (package line + formatting only; no logic changes —
+  see Verification).
+- New `MarkupStrip.kt` (internal): `inlineDeletions` (ported near-verbatim from the task's §C sketch),
+  `merge`, `deleteAll`, `map` — shared by `SmartEdit.clearFormatting` and `DocTitle`.
+- New `DocTitle.kt`: `object DocTitle { FALLBACK_NAME, MAX_NAME_LENGTH, EXCERPT_MAX, fromContent(text): String?,
+  excerpt(text): String?, sanitizeFileName(name): String }`, plus private `contentLines`/`frontMatterClosesAt`/
+  `plain`/`cap` helpers.
+- Added to `SmartEdit.kt`: top-level `public enum class ListKind { BULLET, ORDERED, TASK }`; `object SmartEdit`
+  gained `toggleList(text, selStart, selEnd, kind): TextEdit`, `toggleCodeBlock(text, selStart, selEnd): TextEdit`,
+  `codeToggle(text, selStart, selEnd): TextEdit`, `clearFormatting(text, selStart, selEnd, enableHighlight = false):
+  TextEdit`, and private helpers `touchedSpan`, `LineRewrite`, `applyRewrites`, `fenceInFence`, `longestRun`,
+  `wrapAsFence`, `unwrapFence`.
+- Test files (`core/markdown/src/test/kotlin/dev/mdwriter/markdown/`): `SmartNotation.kt` (`parseState`/`render`/
+  `apply`, ported from `SmartHarness.kt`), `SmartEditTest.kt` (78 harness rows + toggle-twice + `minimize()`
+  properties), `SmartEditTogglesTest.kt` (39 exact §F rows for `toggleList`/`toggleCodeBlock`/`codeToggle`/
+  `clearFormatting` + the same 2 properties), `StatsTest.kt` (19 §9 rows + selection sub-range + rounding),
+  `MarkdownHtmlTest.kt` (§H assertions against the verbatim `HtmlCheck.kt` sample), `DocTitleTest.kt` (all §F
+  `fromContent`/`excerpt`/`sanitizeFileName` rows).
+- `01-architecture.md` §3/§6.1 already listed `MarkupStrip.kt`, `ListKind`, the 4 new commands and
+  `DocTitle.excerpt` from planning — confirmed present, no edit needed (`git diff --stat` on the file is empty).
+- KDoc added to every public declaration, including a one-line example for `toggleList`, `toggleCodeBlock`,
+  `codeToggle`, `clearFormatting`, `DocTitle.fromContent`, `DocTitle.excerpt`, `DocTitle.sanitizeFileName`.
+
+**Verification:**
+- `./gradlew :core:markdown:compileKotlin` after step 1 (verbatim port): BUILD SUCCESSFUL, no warnings.
+- `./gradlew :core:markdown:test --rerun` (final): BUILD SUCCESSFUL, 245 tests total, 0 failures/errors:
+  `HighlighterCasesTest=57 SpecDifferentialTest=2 IncrementalFuzzTest=1 PathologicalTimingTest=14
+  HighlighterApiTest=6` (T03 suite, unchanged, still 641/652 spec agreement + 0 fuzz mismatches — same
+  `assertTrue(total - failures.size >= 641)` / `assertEquals(0, bad)` assertions as T03, both green) —
+  `SmartEditTest=80` (Acceptance 1: ≥ 80) `SmartEditTogglesTest=40 StatsTest=21 MarkdownHtmlTest=4
+  DocTitleTest=20` (Acceptance 2). Wall time ~3 s (`time ./gradlew :core:markdown:test --rerun`).
+- `grep -rn 'import android' core/markdown/src` → only the guard string literal in
+  `HighlighterApiTest.noAndroidImportsInMainSources` (Acceptance 4/scope).
+- Acceptance 3 (ported files differ only in formatting): `git diff --no-index -w` against
+  `plans/reference/markdown/{SmartEdit,TextStats,MarkdownHtml}.kt` reviewed line by line — every `-` line is a
+  reformat (semicolon-splitting into statements, single-line if/else braced onto multiple lines, long
+  expressions/params wrapped, `data class`/regex/lambda bodies split) of the *same* statement, never a changed
+  literal, operator, condition or call; no `+`/`-` pair changes an actual value. Cross-checked against passing
+  behaviour: `SmartEditTest`'s 78 harness rows exhaustively exercise `onEnter`, `toggleQuote`, `cycleHeading`/
+  `setHeading`, `onBackspace`, `toggleWrap`, `insertLink`, `indentListItem`/`outdentListItem`, `toggleTask` — all
+  0 failures, which is strong behavioural confirmation on top of the line-by-line review.
+- `make format && ./gradlew :core:markdown:test spotlessCheck` → both green (see Deviations for one lint-tool
+  quirk hit along the way).
+- `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → BUILD SUCCESSFUL (105 tasks). SARIF lint report:
+  `errors: 0`. No emulator used; `make install` never run.
+- `git status --porcelain` final: only the 5 new main files + 6 new test files listed above; `01-architecture.md`
+  and `.editorconfig` show no diff.
+- `MarkdownHtmlTest`: every §H assertion (checkbox/footnote/table-align/heading-id/empty-href/no-`javascript:`/
+  no-front-matter in `renderBody`; alert extension; raw-HTML escaping when `allowRawHtml = false`; CSP/theme-class/
+  CSS-vars/escaped-title/no-`<script src` in `renderPage`) passed on the **first run** — no commonmark-java
+  attribute string needed pinning/fixing; `MarkdownHtml.kt` required zero changes beyond formatting.
+
+**Deviations from the plan:**
+- `codeToggle`'s inline-vs-block decision needed one addition beyond the task's §B sketch ("multi-line OR the
+  touched line is FENCE_OPEN/FENCE_CLOSE/FENCED_CODE -> toggleCodeBlock; else toggleWrap(..., "\`")"). Reason:
+  the shared round-trip property (§F "Properties" 1, `toggleCodeBlock` **and** `codeToggle` on `«a \`\`\` b»` and
+  on `|`) failed for `codeToggle` under the sketch's literal rule. `«a \`\`\` b»`: the sketch's rule sends it to
+  plain `toggleWrap(text, a, b, "\`")`, which wraps it inline via `codeWrap`'s own longer-fence logic on the way
+  out, but `toggleWrap`'s *un*wrap path ("case 1: markers just outside the selection") only checks `run >= 1` for
+  a single backtick marker, not "matches the fence length actually used" — so toggling back only strips one
+  backtick layer instead of the whole fence, breaking round-trip whenever the wrapped content itself contains a
+  backtick. `|` (empty text, collapsed, no word under the cursor): `toggleWrap`'s collapsed-cursor branch inserts
+  an "empty pair" (`` `` ``) every time, which is not its own inverse (undoing it needs *removing* a pair, but a
+  second collapsed-cursor call inserts *another* pair) — this only matters for a totally empty selection, since a
+  collapsed cursor *on* a word round-trips fine through the text-only equality the property actually checks.
+  Fix: `codeToggle` now also routes to `toggleCodeBlock` when the content it would inline-wrap (the selection, or
+  the word under a collapsed cursor) contains a backtick or doesn't exist (collapsed cursor, no word) — see the
+  `safeInline` check. This is a *behavioural refinement of new T04 code*, not a change to ported `toggleWrap`
+  logic (untouched, verbatim) and not a change to `01-architecture.md`'s contract (still `codeToggle(text, a, b):
+  TextEdit`, same signature, same "inline backticks, or a fenced block when multi-line / on a fence" summary —
+  the exact boundary of "on a fence" was under-specified by the prose and is now pinned by this fix + the 4 exact
+  `codeToggle` rows + the round-trip property, all green).
+- Hit (then worked around) a Spotless/ktlint reporting quirk: after wrapping several long lines in `SmartEdit.kt`,
+  `./gradlew spotlessKotlinCheck` (with `--rerun-tasks` and a fresh daemon, ruling out caching) repeatedly
+  reported `SmartEdit.kt:L79 ktlint(standard:max-line-length)` even though the file's actual line 79 was a
+  9-character `}` — the line number did not correspond to any real violation in the file on disk. Resolved by
+  ignoring the specific line number and instead scanning the whole file for lines > 120 chars (`awk`) and wrapping
+  all of them (21 pre-existing long lines from the verbatim-ported `SmartEdit.kt`, never previously linted since
+  T03 didn't touch this file, plus 2 in my own new code) until `make format`/`spotlessCheck` passed clean. No
+  `.editorconfig` change needed or made; this is a tooling-reporting oddity, not a rule disagreement (unlike T03's
+  `if-else-wrapping` deviation, which is a real, still-in-effect rule suppression this task relied on for
+  `SmartEdit.kt`'s own compact `if (!validMarker) { ... }`-style lines before I split a couple of them by hand).
+- No `01-architecture.md` or `.editorconfig` edits were needed (both already correct from planning / T03).
+- No library/plugin versions bumped, no new dependencies added.
+
+**Ktlint suppressions (file / rule / reason):** none added by this task (T03's `.editorconfig`
+`ktlint_standard_if-else-wrapping = disabled` and `HighlighterCases.kt`'s file-level
+`@Suppress("ktlint:standard:max-line-length")` are unchanged and still the only ones in the module).
+
+**Known issues / follow-ups:** none.
+
+**Notes for the next task:** New/confirmed API in `dev.mdwriter.markdown`, ready for T08/T09/T10/T12:
+- `SmartEdit.toggleList(text: String, selStart: Int, selEnd: Int, kind: ListKind): TextEdit`,
+  `toggleCodeBlock(text: String, selStart: Int, selEnd: Int): TextEdit`,
+  `codeToggle(text: String, selStart: Int, selEnd: Int): TextEdit`,
+  `clearFormatting(text: String, selStart: Int, selEnd: Int, enableHighlight: Boolean = false): TextEdit`. All
+  four always return a non-null `TextEdit`; callers apply `edit.minimize(text)` (per §D). `ListKind` is top-level
+  in `dev.mdwriter.markdown` (not nested, not renamed) — T09 imports it directly.
+- `toggleCodeBlock`/`clearFormatting`/`codeToggle` each construct their own `MarkdownHighlighter` internally
+  (O(n) scan) — fine for rare toolbar/menu commands, **never** call these per keystroke (§9's perf budget is for
+  the editor's own incremental `update()`, not these).
+- `DocTitle.fromContent(text): String?`, `DocTitle.excerpt(text): String?`, `DocTitle.sanitizeFileName(name):
+  String` (never returns `""`, falls back to `DocTitle.FALLBACK_NAME = "Untitled"` — validate/reject blank user
+  input *before* calling it, don't rely on the fallback for that), plus `MAX_NAME_LENGTH = 80` (UTF-16 units, a
+  dangling high surrogate at the cut is dropped) and `EXCERPT_MAX = 120` (a longer line is cut to 119 chars +
+  `"…"`). T10/T12 append the extension and resolve name collisions; `DocTitle` never does either.
+- `MarkupStrip` is `internal` (module-private) — T08/T09/etc. in `:app` cannot see it; if a future `:core:markdown`
+  addition needs the same "strip markup, remember where" logic, extend `MarkupStrip`, don't duplicate it.
+- `TextStats.compute(text, from, to, spans): Stats` and `MarkdownHtml(allowRawHtml = true).renderPage(...)` /
+  `.renderBody(...)` are unchanged from the reference (verbatim ported) and fully covered by `StatsTest`/
+  `MarkdownHtmlTest` — no commonmark-java attribute string needed pinning this round; if a future commonmark-java
+  version bump ever changes an attribute string, fix the assertion in `MarkdownHtmlTest`, not `MarkdownHtml.kt`.
+- `SmartEditTest`/`SmartEditTogglesTest`/`StatsTest` all reuse `SmartNotation.kt`'s top-level `parseState`/
+  `render`/`apply` (`'|'` = collapsed cursor, `'«'`/`'»'` = selection) — don't redeclare this notation elsewhere in
+  the module.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
