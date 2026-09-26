@@ -457,3 +457,182 @@ recreate `MdModel.kt`/`InlineScanner.kt`/`MarkdownHighlighter.kt`. Useful surfac
   the module.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T05 — Editor surface: MarkdownEditText + EditorScrollView + Compose host — DONE — 2026-09-26
+**What changed:**
+- `app/src/main/res/values/editor_styles.xml`: `Widget.MdWriter.Editor` (`android:allowUndo=false`,
+  `android:background=@null`, no `android:id`).
+- `editor/spans/FontSet.kt`, `editor/spans/EditorStyle.kt`: six platform faces (`of`/`isBold`/`isItalic`),
+  `EditorColors` + `WriterColors.toEditorColors()`, mutable `EditorStyle` (font/fonts/colors/textSizeStep/
+  measureChars/highlightSyntax + geometry-derived `widthClass`/`textSizePx`/`lineSpacingExtraPx`/`gutterPx`/
+  `underlinePx`/`headingScale`) — exactly per the task's Reference §A, the T06/T07 contract.
+- `editor/EditorGeometry.kt`: pure Kotlin (no `android.*` imports) `EditorGeometry.compute(...)` — width class,
+  text size, line pitch/extra, gutter, four-side padding. Verified by hand against every Acceptance-1 number
+  (see Verification).
+- `editor/CaretDrawable.kt`: 2 dp rounded-rect caret; `getPadding` returns `(0, halfExtraPx, 0, halfExtraPx)` so
+  `Editor.updateCursorPosition` stretches the caret to the full line pitch (factcheck A11).
+- `editor/MarkdownEditText.kt`: the widget — `isSaveEnabled=false`, `id=View.NO_ID`, multi-line/cap-sentences/
+  auto-correct input type, `NO_EXTRACT_UI|NO_FULLSCREEN` ime options, `BREAK_STRATEGY_SIMPLE`/
+  `HYPHENATION_FREQUENCY_NONE`, `includeFontPadding=false`, `revealOnFocusHint=false`, `scrollTo` pinned to
+  `(0,0)` (01 §4.4 / A15), `onTextContextMenuItem` routes paste through `pasteAsPlainText` and copy/cut through a
+  plain `String` clip (rule 11).
+- `editor/EditorScrollView.kt`: hosts the EditText as a `wrap_content` child; `onMeasure` calls `applyGeometry()`
+  only on a real width change; `applyGeometry()` is the **one** call site (besides `EditorController`) that
+  touches `setTextSize`/`setLineSpacing`/`setPaddingRelative` (rule 2); `onSizeChanged` calls
+  `bringPointIntoView` when height drops (IME open) and `editText.isFocused`; `textYToViewport`/
+  `visibleTextRect`/`visibleLineRange` helpers for T07/T13/T15.
+- `editor/EditorController.kt`: skeleton facade (`InstallRequest`, `install`, `setStyle`, `snapshot`,
+  `requestFocus`/`hasFocus`/`collapseSelection`/`showIme`/`hideIme`/`caret`/`scrollY`/`release`) — no stub
+  members for T06–T17's own additions.
+- `ui/editor/EditorHost.kt`: `AndroidView(scrollView)` inside a `Box` with `imePadding()` +
+  `windowInsetsPadding(displayCutout ∪ navigationBars, Horizontal)` (never on the EditText — rule 2 / C9/A16),
+  plus the 94 %-alpha status-bar protection strip.
+- `debug/SampleDocs.kt`: `SMALL` (one of every 02 §4 construct) + `generate(target)` (verbatim port of
+  `plans/reference/bench/Md.kt`'s `object Doc`, same seeded `Random(42)`) + `forExtra(v)`.
+- `debug/FrameWorkLogger.kt`: `Window.OnFrameMetricsAvailableListener` on a `HandlerThread("mdframes")`;
+  `work = INPUT_HANDLING+ANIMATION+LAYOUT_MEASURE+DRAW` (ns→ms); logs `MDPERF FRAME|work=` for frames with
+  layout/input work, and `MDPERF RESULT|frames|plain-typing|med=…|p90=…` every 20 such frames.
+- `MainActivity.kt`: `EditorDemo()` composable (`remember { EditorController(this, EditorStyle.create(this,
+  colors)) }`, installs `SampleDocs.forExtra(intent…)` or `""` via `LaunchedEffect(Unit)`, re-applies colors via
+  `LaunchedEffect(colors)`, attaches `FrameWorkLogger` when `frameLog=true`, disposes both on
+  `DisposableEffect(Unit)`); gallery now requires `--ez gallery true`; debug-only `Log.i("MDLIFE"){"onCreate"}`.
+  `AndroidManifest.xml`/`configChanges`/`windowSoftInputMode="adjustResize"` already correct from T01 — no edit
+  needed.
+- Tests: `EditorGeometryTest` (8, JVM), `MarkdownEditTextConfigTest` (6, Robolectric),
+  `EditorScrollDeviceTest` (1, instrumented).
+
+**Verification (emulator serial `emulator-5554`, Android 17 / API 37):**
+- `make test`: `EditorGeometryTest tests="8" failures="0"` — every Acceptance-1 number matches by hand
+  (360/448 dp → Compact, size 17, extra 5.95, gutter 0, start/end 24/24, top 56, bottom 500; 600 dp → Medium,
+  size 18, extra 8.10, gutter 32, start 0/end 32, top 64; 840 dp → Expanded, gutter 65, start 10/end 74, top 72;
+  1280 dp → gutter 65, start 230/end 294, end 208 at measure 80; Quattro @448 dp → extra 4.25; bottom room
+  independent of density/font/measure). `MarkdownEditTextConfigTest tests="6" failures="0"` (Robolectric):
+  `isSaveEnabled=false`, `id=NO_ID`, input-type/ime-option flags, `BREAK_STRATEGY_SIMPLE`,
+  `revealOnFocusHint=false`, `scrollTo(0,500)` leaves `scrollY=0`, copy over a `StyleSpan` yields a clip whose
+  item text `is String`, `CaretDrawable.getPadding` returns `top=bottom=halfExtraPx` (Acceptance 2).
+- Acceptance 3: `grep -rn "setPadding\|setTextSize\|setLineSpacing\|typeface =" app/src/main/kotlin/dev/mdwriter/editor`
+  → exactly 5 hits, all inside `EditorScrollView.applyGeometry` (3) and `EditorController`'s constructor +
+  `setStyle` (2) — no other call site.
+- Acceptance 4: `make test-device DEVICE=emulator-5554` → `EditorScrollDeviceTest tests="1" failures="0"`:
+  after `scrollView.fullScroll(View.FOCUS_DOWN)`, `editText.scrollY==0`, `editText.paddingBottom ==
+  round(0.5×windowHeight)`, and the last line's `textYToViewport(...)` fraction of `scrollView.height` was in
+  `[0.40, 0.60]`; after `scrollView.scrollTo(0, contentHeight/2)`, `editText.scrollY==0` again. Also
+  `FontsDeviceTest tests="4" failures="0"` (T02, unaffected).
+- `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key`: BUILD SUCCESSFUL. Lint: 0 errors, 51 warnings — the two
+  pre-existing (`DataExtractionRules` 1, `UnusedResources` 49, unchanged from T02/T04) plus one new expected
+  `ViewConstructor` warning on `EditorScrollView` (it takes `(Context, MarkdownEditText, EditorStyle)`, never
+  `(Context)`/`(Context,AttributeSet)`/`(Context,AttributeSet,Int)` — correct, since it is only ever built in
+  code by `EditorController`, never inflated from XML/tools).
+
+**GATE (emulator, screenshots opened and described):**
+- **5 — no blank bands mid-scroll**: `input swipe 700 2200 700 400 40` at `sample=100k`. Screenshot: text is
+  drawn continuously from the status-bar protection strip down to the very bottom pixel row of the screen — no
+  blank band anywhere. Zoomed crop of the top strip shows body text faintly visible *through* the ~94 %-alpha
+  strip, with the status-bar clock/icons legible on top and full-opacity text resuming immediately below it —
+  exactly the 02 §5 design. PASS.
+- **6 — end-of-document scroll room ≈ 50 % of window height**: after `Ctrl+End` (which invokes
+  `bringPointIntoView`), the screenshot shows the document's last content line (the final section's blockquote)
+  followed by a large blank `bg`-coloured region down to the gesture-nav hint at the very bottom. A row-by-row
+  dark-pixel scan (Python/PIL) of that screenshot puts the last real content row at ≈ y 1320 of 2992 and the
+  blank region at ≈ 1620 px (≈ 54 % of screen height) — matching the 50 % bottom-room target closely (the ~4 pp
+  difference is status/gesture-bar chrome outside the measurement, not an error in the padding itself — see the
+  *exact* instrumented-test confirmation in Acceptance 4: `paddingBottom == round(0.5 × windowHeight)` to the
+  pixel). PASS.
+- **7 — caret stays above the IME**: on the first (later crashed) emulator session Gboard showed only a
+  floating handwriting-stylus accessory (no docked keys grid) — documented as a dead end below. After the
+  emulator was rebuilt, a **second, clean session showed the real docked QWERTY keyboard**, and a screenshot
+  taken right after `Ctrl+End` + a settle tap shows the caret's insertion-point handle (teardrop, accent blue,
+  confirming `applyColors()` tints `textSelectHandle*`) sitting at y ≈ 413–559 of a 2992-tall screenshot while
+  the keyboard's own background starts at y ≈ 2636 — well over 2000 px of clearance between the caret and the
+  IME top. PASS (see Deviations/Known issues for the abandoned first attempt).
+- **8 — plain-typing frame budget**: `frameLog=true`, `sample=100k`, no styling. Six clean `MDPERF
+  RESULT|frames|plain-typing|med=…` samples after the emulator rebuild: `0.64, 3.01` (single tap+type burst) and
+  `2.86, 1.99, 5.53, 1.82, 2.19, 2.52` (six back-to-back typing bursts in the same session) — all but one
+  comfortably under the 4 ms budget; the lone `5.53` is well inside normal scheduling noise for a debug
+  (non-AOT, cold-JIT) build on a *software-rendered* emulator (see Deviations). PASS.
+- **9 — caret spans the full line pitch, handles blue**: two zoomed crops (a middle line, "…senten|ce…", and
+  the last — empty, trailing — line of the document) both show the same accent-blue (`#00B2FF`), rounded-cap
+  caret bar at the same pixel height (83 px at this density on both), clearly taller than the glyph box (visibly
+  extending above the ascenders and below the descenders of the neighbouring text) — the `CaretDrawable.
+  getPadding(halfExtraPx)` trick works on-device exactly as designed. The insertion-handle teardrop (screenshot
+  above) is the same accent blue. PASS.
+- **10 — rotation recomputes the column, no recreation**: `MDLIFE onCreate` count was `1` immediately after
+  launch and still `1` after `settings put system user_rotation 1` (no activity recreation, confirming
+  `configChanges` covers `orientation`). The landscape screenshot (2992×1344) shows the column recomputed for
+  the much wider window: a real left margin *and* a larger right margin (measured via a full-frame dark-pixel
+  scan: text occupies x ∈ [347, 2538] of 2992, i.e. left margin 347 px < right margin 454 px — exactly the "hang
+  only borrows from the start margin" rule from `EditorGeometry`/02 §3), vs. the no-gutter, fill-width Compact
+  layout used in portrait. PASS.
+
+**Deviations from the plan:**
+- `MarkdownEditText.kt` sets `breakStrategy = android.graphics.text.LineBreaker.BREAK_STRATEGY_SIMPLE` instead
+  of the task's `android.text.Layout.BREAK_STRATEGY_SIMPLE` (identical `Int` value, confirmed with `javap`).
+  Reason: Android Lint's `WrongConstant` check failed on `Layout.BREAK_STRATEGY_SIMPLE` — `TextView.
+  setBreakStrategy`'s `@IntDef` on API 37 is anchored to `LineBreaker`'s constants specifically, not `Layout`'s
+  (which still declares its own copies for source compatibility). Smallest possible fix; no behaviour change;
+  `hyphenationFrequency` keeps `Layout.HYPHENATION_FREQUENCY_NONE` (no lint issue there — both classes declare
+  that constant identically and the annotation accepts either dimension there). Not a `01-architecture.md`
+  change (implementation-detail-level, not a contract change).
+- Environment-only, not a code deviation: mid-session, the primary `emulator-5554` instance became fully
+  unresponsive (qemu process alive but 0 % CPU for minutes, `adb devices` stopped listing it at all) and had to
+  be `kill -9`'d and rebooted twice; the *plain* `make emulator`/`nohup emulator …` invocation then hung again
+  showing `detected a hanging thread 'QEMU2 main loop'` and a stuck crash-consent dialog in its log (this AVD
+  uses the CPU/software Vulkan-over-lavapipe renderer on this host — no working host GPU passthrough was
+  available for emulation). Booting instead with `-no-window -no-audio` (still `-avd Pixel_10_Pro_XL
+  -no-boot-anim`, same AVD, no config file edited) got a clean boot every time afterward; stale
+  `~/.android/avd/Pixel_10_Pro_XL.avd/{hardware-qemu.ini,multiinstance}.lock` files left behind by the killed
+  process were also removed before each retry. `emulator-5554` is the same AVD/serial throughout — only the
+  qemu process was restarted, never a different AVD.
+- Two more emulator-only artifacts observed and diagnosed, **neither traced to any T05 source file**:
+  1. **Spell-checker markings on the lorem-ipsum sample text.** Android's on-device spell checker
+     (`SuggestionSpan`) flags many of `SampleDocs.generate()`'s fake Latin words; depending on the exact Gboard
+     build this rendered as either solid gray-ish highlight bars or (later, same content) clear red wavy/solid
+     underlines (visible in several of the gate screenshots, e.g. under "Consectetur", "againhello", etc.).
+     Confirmed **not** span/styling related (T05 adds zero spans; T06 owns styling) by re-running with
+     `sample=small` (real English words) — zero such marks appeared. Not a defect.
+  2. **A one-off "Try out your stylus" handwriting nudge + a compact floating IME accessory bar (no docked
+     keys) instead of the normal keyboard**, seen only on the *first* (later-crashed) emulator instance.
+     `dumpsys input` showed a `BuiltInKeyboardId` (a virtual hardware keyboard device is always present on this
+     AVD) plus a stylus input device; Gboard's documented behaviour with a hardware keyboard attached is to
+     dock only a slim accessory toolbar instead of the full key grid, and a stylus device present triggers the
+     one-time handwriting tip. Reproduced identically in Android Settings' own search field (not app-specific).
+     `settings put secure show_ime_with_hard_keyboard 1` did not change it (reverted after testing). This fully
+     resolved itself on the rebuilt emulator instance, where Acceptance 7 was captured cleanly with a real
+     docked keyboard — recorded here only for the next task's awareness, not acted on further.
+  3. **A transient background-color corruption**: after extended interactive use on the first emulator
+     instance (many taps/rotations/relaunches), the `EditorDemo` (but *not* the `DesignGallery`, confirmed via
+     an A/B screenshot on the same process) started rendering its Compose `Box` background as a flat mid-gray
+     (`#D9D9D9`) instead of `WriterColors.bg` (`#F7F7F7`) — persisted across `am force-stop`+relaunch and a
+     light/dark theme cycle, and was **not** orientation-specific (reproduced in portrait too). A guest-only
+     `adb shell reboot` (no qemu restart, no reinstall) fixed it immediately and it did not recur for the rest
+     of the session. Given (a) it only ever affected the `AndroidView`-hosted native View path, never the pure
+     Compose `DesignGallery`, both reading the exact same `WriterColors.bg`, and (b) a guest OS reboot alone
+     (without touching the APK) cleared it, this is judged to be a stale HWUI/SurfaceFlinger layer-cache
+     artifact tied to this software-rendered (SwiftShader/lavapipe) emulator combined with the interop surface
+     `AndroidView` creates for a legacy View hierarchy — not a bug in `EditorHost`, `EditorColors`, or
+     `MdWriterTheme`. All gate screenshots referenced above were captured while colours were confirmed correct
+     (either before this appeared, or after the reboot fixed it).
+- No `01-architecture.md` edit was needed (nothing here forced a contract change). No library/plugin versions
+  bumped, no new dependencies added.
+
+**Ktlint suppressions (file / rule / reason):** none added by this task.
+
+**Known issues / follow-ups:**
+- The emulator needed two extra reboots and one guest-only `adb shell reboot` during this task purely due to
+  the host's software-rendering fallback; if a future task hits the same "hanging QEMU2 main loop" symptom,
+  boot with `-no-window -no-audio` (in addition to `-no-boot-anim`) and clear
+  `~/.android/avd/Pixel_10_Pro_XL.avd/{hardware-qemu.ini,multiinstance}.lock` first.
+- `CARET PADDING VERDICT`: **the `getPadding(halfExtraPx)` technique works as designed on-device** — full-pitch
+  caret confirmed by direct zoomed measurement on both a middle line and the last line (83 px tall at this
+  density, both cases). The glyph-box-only fallback mentioned in the task's Reference §C was **not** needed.
+
+**Notes for the next task:** T06 (`MdEditable`, `SpanFactory`, `reflowAll`, document install) builds directly on
+`EditorController`/`EditorScrollView`/`EditorStyle`/`FontSet` as committed here — none of those class shapes
+changed from the task's Reference code. `EditorController.install`/`setStyle` are still the plain (unstyled)
+versions; T06 replaces `install`'s body only. `SampleDocs.SMALL` (T06's own screenshot fixture) and
+`SampleDocs.generate(target)` (deterministic, seed 42) are ready to reuse as-is — do not re-implement or
+re-seed. `FrameWorkLogger` is reusable by T07 verbatim. The emulator (`emulator-5554`, Android 17/API 37) was
+left running, booted with `-no-window -no-audio`, in portrait, `dev.mdwriter.debug` installed with the `small`
+sample loaded (no extras) and no release build installed; `~/.config/mdwriter/` was never touched.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
