@@ -96,20 +96,24 @@ app/src/main/kotlin/dev/mdwriter/
                           LibraryUiState.kt (Crumb, LocationItem, FileItem, PendingDelete, LibraryEvent,
                           LibraryUiState), FileRow.kt (FileRow/FolderRow/LocationRow/RowMenu), LibraryDialogs.kt
                           (NameDialog, MoveDialog, validateName), LibrarySnackbar.kt (DeleteUndoSnackbarHost),
-                          RelativeDate.kt [T12], LibraryPane.kt [T13], ExportAllNotesAction.kt [T18]
+                          RelativeDate.kt [T12], LibraryPane.kt [T13], LinkFolderLauncher.kt (rememberLinkFolderLauncher)
+                          [T14], ExportAllNotesAction.kt [T18]
     preview/              PreviewOverlay.kt, PreviewWebView.kt, DocumentImagePathHandler.kt, ImagePath.kt,
                           PreviewLinkPolicy.kt, PreviewTheme.kt, PreviewRenderer.kt, PreviewSync.kt [T16]
     settings/             SettingsSheet.kt, AboutSheet.kt
     find/                 FindBar.kt
   data/
-    storage/              DocumentStore.kt, InternalStore.kt, SafTreeStore.kt, AtomicWriter.kt, TextCodec.kt,
+    storage/              DocumentStore.kt, InternalStore.kt, AtomicWriter.kt, TextCodec.kt,
                           RecoveryStore.kt, StorageError.kt, NoteFiles.kt [T10], Hashes.kt [T10], TrashBin.kt [T10],
-                          ExternalDocStore.kt [T18]; T14 adds SafIo.kt, TreeGrants.kt, LocationInfo.kt, LinkFolderLauncher.kt
+                          SafIo.kt (PROJECTION/query/stat/displayName/flags/readAll/readHead/writeWt),
+                          SafTreeStore.kt (DocumentStore over one linked tree) [T14], ExternalDocStore.kt [T18]
     library/              Location.kt (LocationId, DocRef, FolderRef, DocKey), LibraryEntry.kt, LibraryRepository.kt
                           (entries/invalidate/nameOf/createUnique/rename/duplicate/move/createFolder/trash/
                           folderTree/prefix/search, FolderNode, SearchHit) [T12],
                           Excerpt.kt (one-line delegate to DocTitle.excerpt), UniqueName.kt (numbered/copyOf/
-                          splitName), AutoNamer.kt (LeaveReason, LeaveOutcome, AutoNamer) [T12]
+                          splitName), AutoNamer.kt (LeaveReason, LeaveOutcome, AutoNamer) [T12],
+                          TreeGrants.kt (take/release/isGranted/rootName), LocationInfo.kt (LocationInfo,
+                          LocationState) [T14]
     document/             DocumentRepository.kt, AutosaveCoordinator.kt, LoadedDocument.kt, SaveResult.kt,
                           ConflictNames.kt, WelcomeNote.kt [T11]
     settings/             Settings.kt, SettingsRepository.kt, PositionStore.kt

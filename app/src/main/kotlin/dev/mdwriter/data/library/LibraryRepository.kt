@@ -1,8 +1,11 @@
 package dev.mdwriter.data.library
 
+import android.net.Uri
+import android.provider.DocumentsContract
 import dev.mdwriter.data.settings.SettingsRepository
 import dev.mdwriter.data.storage.DocumentStore
 import dev.mdwriter.data.storage.NoteFiles
+import dev.mdwriter.data.storage.SafTreeStore
 import dev.mdwriter.data.storage.StorageError
 import dev.mdwriter.data.storage.StorageException
 import kotlinx.coroutines.CoroutineDispatcher
@@ -10,6 +13,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -17,6 +23,8 @@ import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import java.io.IOException
+import java.util.concurrent.ConcurrentHashMap
 
 /** One node of [LibraryRepository.folderTree]: [folder] itself, its display [name] and its [depth] (root = 0). */
 data class FolderNode(
@@ -46,27 +54,188 @@ class LibraryRepository(
     private val internalStore: DocumentStore,
     private val settings: SettingsRepository,
     private val io: CoroutineDispatcher = Dispatchers.IO,
+    /** T14: builds a fresh [SafTreeStore] (or a fake, in tests) for a tree URI string. Never called twice for the
+     * same tree — [LibraryRepository] caches one instance per tree ([treeStore]). */
+    private val treeStoreFactory: (String) -> DocumentStore = { treeUriString ->
+        throw StorageException(
+            StorageError.PermissionLost,
+            IllegalStateException("no tree store factory: $treeUriString"),
+        )
+    },
+    /** T14: null in tests that never touch a real grant (they can pre-seed [locations] via [seedLocationsForTest]
+     * or simply never call [linkTree]/[revalidate]). */
+    private val treeGrants: TreeGrants? = null,
 ) {
+    private val treeStores = ConcurrentHashMap<String, DocumentStore>()
+    private val treeNames = ConcurrentHashMap<String, String>()
+
+    private fun treeStore(treeUriString: String): DocumentStore =
+        treeStores.getOrPut(treeUriString) {
+            treeStoreFactory(treeUriString)
+        }
+
+    private val _locations =
+        MutableStateFlow(listOf(LocationInfo(LocationId.Internal, "", LocationState.Ready)))
+
+    /** Internal first, then linked trees in [dev.mdwriter.data.settings.Settings.linkedTrees] order. Populated by
+     * [revalidate] (called on every `ON_START`) and refreshed by every link/unlink/reconnect. */
+    val locations: StateFlow<List<LocationInfo>> = _locations.asStateFlow()
+
+    private fun rootDocRef(treeUriString: String): DocRef.TreeDoc =
+        DocRef.TreeDoc(treeUriString, DocumentsContract.getTreeDocumentId(Uri.parse(treeUriString)))
+
+    private fun guessNameFromUri(uri: Uri): String {
+        val last = uri.lastPathSegment ?: return uri.toString()
+        val afterColon = Uri.decode(last.substringAfterLast(':'))
+        return afterColon.substringAfterLast('/').ifEmpty { afterColon }
+    }
+
+    private fun nameForTree(
+        treeUriString: String,
+        uri: Uri?,
+    ): String = treeNames[treeUriString] ?: uri?.let(::guessNameFromUri) ?: treeUriString
+
     fun storeFor(ref: DocRef): DocumentStore =
         when (ref) {
             is DocRef.InternalFile -> internalStore
-            is DocRef.TreeDoc -> throw StorageException(StorageError.PermissionLost)
+            is DocRef.TreeDoc -> storeForTreeChecked(ref.treeUri)
             is DocRef.External -> throw StorageException(StorageError.NotFound)
         }
 
     fun storeFor(location: LocationId): DocumentStore =
         when (location) {
             LocationId.Internal -> internalStore
-            is LocationId.Tree -> throw StorageException(StorageError.PermissionLost)
+            is LocationId.Tree -> storeForTreeChecked(location.treeUri)
         }
 
-    fun rootOf(location: LocationId): FolderRef = FolderRef(location, "")
+    private fun storeForTreeChecked(treeUriString: String): DocumentStore {
+        val info = _locations.value.firstOrNull { it.id == LocationId.Tree(treeUriString) }
+        if (info != null &&
+            info.state == LocationState.Disconnected
+        ) {
+            throw StorageException(StorageError.PermissionLost)
+        }
+        return treeStore(treeUriString)
+    }
 
-    fun parentOf(ref: DocRef): FolderRef? =
+    fun rootOf(location: LocationId): FolderRef =
+        when (location) {
+            LocationId.Internal -> FolderRef(location, "")
+            is LocationId.Tree -> FolderRef(location, rootDocRef(location.treeUri).documentId)
+        }
+
+    suspend fun parentOf(ref: DocRef): FolderRef? =
         when (ref) {
             is DocRef.InternalFile -> FolderRef(LocationId.Internal, ref.relPath.substringBeforeLast('/', ""))
-            else -> null
+            is DocRef.TreeDoc -> (storeFor(ref) as? SafTreeStore)?.parentFolder(ref.documentId)
+            is DocRef.External -> null
         }
+
+    /** Caps of a FOLDER itself (not a listed [LibraryEntry] — used to gate "new note"/"new folder" on the current
+     * folder, 02 §7 / T14 step 9). Always [EntryCaps.ALL] for [LocationId.Internal]. */
+    suspend fun capsOf(folder: FolderRef): EntryCaps =
+        when (folder.location) {
+            LocationId.Internal -> EntryCaps.ALL
+            is LocationId.Tree -> (storeFor(folder.location) as? SafTreeStore)?.folderCaps(folder.id) ?: EntryCaps.ALL
+        }
+
+    // ---- T14: linking ----------------------------------------------------------------------------------------------
+
+    /** Takes a persistable grant, remembers the tree (order-preserving; a no-op if already linked), and returns its
+     * freshly-[revalidate]d [LocationInfo]. */
+    suspend fun linkTree(treeUri: Uri): LocationInfo =
+        withContext(io) {
+            val treeUriString = treeUri.toString()
+            if (treeUriString !in settings.current().linkedTrees) {
+                requireNotNull(treeGrants) { "linkTree needs a TreeGrants" }.take(treeUri)
+                val name = runCatching { treeGrants.rootName(treeUri) }.getOrElse { guessNameFromUri(treeUri) }
+                treeNames[treeUriString] = name
+                settings.update { it.copy(linkedTrees = it.linkedTrees + treeUriString) }
+            }
+            revalidate()
+            _locations.value.first { it.id == LocationId.Tree(treeUriString) }
+        }
+
+    /** Forgets [id]: drops it from settings, releases the grant, and drops its cached store — never touches any
+     * file. If the currently-open document lives in [id], the caller (`EditorViewModel`) is responsible for its own
+     * fallback; this only fixes up `settings.lastOpenDoc`. */
+    suspend fun unlinkTree(id: LocationId.Tree) =
+        withContext(io) {
+            settings.update { it.copy(linkedTrees = it.linkedTrees - id.treeUri) }
+            runCatching { Uri.parse(id.treeUri) }.getOrNull()?.let { treeGrants?.release(it) }
+            treeStores.remove(id.treeUri)
+            treeNames.remove(id.treeUri)
+            val cur = settings.current()
+            if (cur.lastOpenDoc?.toRef()?.location == id) settings.update { it.copy(lastOpenDoc = null) }
+            invalidate()
+            revalidate()
+        }
+
+    /** Re-picks a folder for a Disconnected (or still-Ready) tree. The same URI just re-takes the grant; a
+     * DIFFERENT URI replaces it at the same position in [dev.mdwriter.data.settings.Settings.linkedTrees] and
+     * releases the old grant (if still held). */
+    suspend fun reconnect(
+        old: LocationId.Tree,
+        picked: Uri,
+    ): LocationInfo =
+        withContext(io) {
+            val grants = requireNotNull(treeGrants) { "reconnect needs a TreeGrants" }
+            val pickedString = picked.toString()
+            grants.take(picked)
+            if (pickedString != old.treeUri) {
+                val order = settings.current().linkedTrees
+                val idx = order.indexOf(old.treeUri)
+                runCatching { Uri.parse(old.treeUri) }.getOrNull()?.let { oldUri ->
+                    if (grants.isGranted(oldUri)) grants.release(oldUri)
+                }
+                treeStores.remove(old.treeUri)
+                treeNames.remove(old.treeUri)
+                settings.update {
+                    val list = it.linkedTrees.toMutableList()
+                    if (idx >= 0) list[idx] = pickedString else list.add(pickedString)
+                    it.copy(linkedTrees = list)
+                }
+            }
+            val name = runCatching { grants.rootName(picked) }.getOrElse { guessNameFromUri(picked) }
+            treeNames[pickedString] = name
+            invalidate()
+            revalidate()
+            _locations.value.first { it.id == LocationId.Tree(pickedString) }
+        }
+
+    /** A tree is Ready iff its grant is still held AND its root document can be `stat`ted; never auto-unlinked
+     * (platform §2.13: a backup/restore loses grants, showing every linked tree as Disconnected — not gone). Call
+     * on every `ON_START`. */
+    suspend fun revalidate() =
+        withContext(io) {
+            val order = settings.current().linkedTrees
+            val updated = mutableListOf(LocationInfo(LocationId.Internal, "", LocationState.Ready))
+            for (treeUriString in order) {
+                val uri = runCatching { Uri.parse(treeUriString) }.getOrNull()
+                var ready = false
+                if (uri != null && treeGrants?.isGranted(uri) == true) {
+                    val stat = runCatching { treeStore(treeUriString).stat(rootDocRef(treeUriString)) }.getOrNull()
+                    if (stat != null) {
+                        ready = true
+                        runCatching { treeGrants.rootName(uri) }.getOrNull()?.let { treeNames[treeUriString] = it }
+                    }
+                }
+                val name = nameForTree(treeUriString, uri)
+                updated +=
+                    LocationInfo(
+                        LocationId.Tree(treeUriString),
+                        name,
+                        if (ready) LocationState.Ready else LocationState.Disconnected,
+                    )
+            }
+            _locations.value = updated
+        }
+
+    /** Test-only seam: lets a test populate [locations] without a real [TreeGrants]/[android.content.ContentResolver]. */
+    fun seedLocationsForTest(locations: List<LocationInfo>) {
+        _locations.value = locations
+        for (l in locations) if (l.id is LocationId.Tree) treeNames[l.id.treeUri] = l.name
+    }
 
     /** Display name (incl. extension) derived purely from the ref; null for stores where that isn't known yet
      * (Tree/External, until T14/T18). */
@@ -179,8 +348,44 @@ class LibraryRepository(
         to: FolderRef,
     ): DocRef =
         withContext(io) {
-            storeFor(ref).move(ref, to).also { invalidate() }
+            val same = ref.location != null && ref.location == to.location
+            if (same) {
+                storeFor(ref).move(ref, to).also { invalidate() }
+            } else {
+                crossLocationMove(ref, to).also { invalidate() }
+            }
         }
+
+    /** Different [LocationId]s (e.g. Internal -> a linked Tree, or Tree -> Tree): copy the bytes, verify the size,
+     * THEN trash the source — the source is only ever removed after a successful, size-verified write. On any
+     * failure after the new document was created, it is trashed and the original exception rethrown; the source
+     * is never touched in that case. */
+    private suspend fun crossLocationMove(
+        ref: DocRef,
+        to: FolderRef,
+    ): DocRef {
+        val src = storeFor(ref)
+        val dst = storeFor(to.location)
+        val bytes = src.read(ref)
+        val name = nameOf(ref) ?: src.displayName(ref)
+        val taken = takenNamesLower(dst, to)
+        val uniqueName = NoteFiles.uniqueName(name, taken)
+        val newRef = dst.create(to, uniqueName)
+        try {
+            dst.write(newRef, bytes)
+            val size = dst.stat(newRef)?.size
+            if (size != null && size != bytes.size.toLong()) {
+                throw StorageException(
+                    StorageError.ProviderFailure(IOException("size mismatch after cross-location move")),
+                )
+            }
+        } catch (t: Throwable) {
+            runCatching { dst.trash(newRef) }
+            throw t
+        }
+        src.trash(ref)
+        return newRef
+    }
 
     suspend fun createFolder(
         parent: FolderRef,

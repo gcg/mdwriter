@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +20,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -46,7 +48,7 @@ import java.util.Locale
 
 /** Pressed row background = `surfaceHover` (02 §7); a plain ripple-backed clickable, no extra decoration. */
 @Composable
-private fun Modifier.clickableRow(onClick: () -> Unit): Modifier {
+fun Modifier.clickableRow(onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
     return clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
 }
@@ -78,6 +80,114 @@ fun LocationRow(
             color = colors.text,
             style = WriterTheme.typography.rowTitle,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.padding(start = 12.dp),
+        )
+    }
+}
+
+/** 02 §7 "Locations" row for a linked folder (T14): `folder`/`folder_open` icon + name, bold when selected. Ready
+ * rows are a plain tap target with a long-press "Stop using this folder" menu; a Disconnected row shows the name
+ * in `textSecondary` with a second "Disconnected" line and a trailing "Reconnect" `TextButton`. */
+@Composable
+fun TreeLocationRow(
+    name: String,
+    selected: Boolean,
+    disconnected: Boolean,
+    onClick: () -> Unit,
+    onStopUsing: () -> Unit,
+    onReconnect: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = WriterTheme.colors
+    val haptics = LocalHapticFeedback.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .heightIn(min = WriterDimens.locationRowHeight)
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        menuOpen = true
+                    },
+                ).padding(horizontal = WriterDimens.rowPaddingHorizontal, vertical = if (disconnected) 8.dp else 0.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(if (disconnected) R.drawable.ic_folder_open else R.drawable.ic_folder),
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(WriterDimens.folderIcon),
+            )
+            Column(Modifier.weight(1f).padding(start = 12.dp)) {
+                Text(
+                    name,
+                    color = if (disconnected) colors.textSecondary else colors.text,
+                    style = WriterTheme.typography.rowTitle,
+                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                )
+                if (disconnected) {
+                    Text(
+                        stringResource(R.string.library_disconnected),
+                        color = colors.textSecondary,
+                        style = WriterTheme.typography.caption,
+                    )
+                }
+            }
+            if (disconnected) {
+                TextButton(onClick = onReconnect) {
+                    Text(stringResource(R.string.library_reconnect), color = colors.accent)
+                }
+            }
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            shape = RoundedCornerShape(12.dp),
+            containerColor = colors.surface,
+            tonalElevation = 0.dp,
+            shadowElevation = 0.dp,
+        ) {
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.library_stop_using_folder), color = colors.text) },
+                leadingIcon = { Icon(painterResource(R.drawable.ic_folder), null, tint = colors.text) },
+                onClick = {
+                    menuOpen = false
+                    onStopUsing()
+                },
+            )
+        }
+    }
+}
+
+/** 02 §7 "Locations" bottom row: `create_new_folder` + "Use a folder…", `textSecondary`. */
+@Composable
+fun UseAFolderRow(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = WriterTheme.colors
+    Row(
+        modifier
+            .fillMaxWidth()
+            .height(WriterDimens.locationRowHeight)
+            .clickableRow(onClick)
+            .padding(horizontal = WriterDimens.rowPaddingHorizontal),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            painter = painterResource(R.drawable.ic_create_new_folder),
+            contentDescription = null,
+            tint = colors.textSecondary,
+            modifier = Modifier.size(WriterDimens.folderIcon),
+        )
+        Text(
+            stringResource(R.string.library_use_a_folder),
+            color = colors.textSecondary,
+            style = WriterTheme.typography.rowTitle,
             modifier = Modifier.padding(start = 12.dp),
         )
     }

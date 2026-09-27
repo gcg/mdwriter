@@ -43,6 +43,7 @@ import dev.mdwriter.data.storage.userMessage
 import dev.mdwriter.editor.InstallRequest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
@@ -51,6 +52,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
@@ -112,6 +114,14 @@ class EditorViewModel(
 
     private var binding: EditorBinding? = null
     private var lastSnapshot: Snapshot? = null
+
+    /** True between `onStart()`/`onStop()` (STARTED lifecycle state) — gates [restartTreeWatch] (T14). */
+    private var isForeground = false
+
+    /** T14: live external-change watch for a `TreeDoc` while it is open AND the activity is STARTED — debounced
+     * 300 ms, re-checks via [checkExternalNow] on every notification (folder content-observer or our own local
+     * mutation). Restarted on every install/re-point; always cancelled on `onStop()`. */
+    private var treeChangesJob: Job? = null
 
     private val uiInternal = MutableStateFlow(EditorUiState.INITIAL)
 
@@ -304,6 +314,7 @@ class EditorViewModel(
         _current.value = new
         uiInternal.update { it.copy(doc = new, title = NoteFiles.baseName(sess.displayName)) }
         handle[KEY_DOC_KEY] = new.key().value
+        restartTreeWatch()
         viewModelScope.launch {
             val oldKey = old.key()
             val newKey = new.key()
@@ -379,6 +390,7 @@ class EditorViewModel(
         val sel = (selection ?: len).coerceIn(0, len)
         val scroll = scrollY ?: 0
         pendingBeginDirty = loaded.recovered
+        restartTreeWatch()
         _events.send(EditorEvent.Install(InstallRequest(loaded.text, sel, scroll, loaded.readOnly)))
         _events.send(EditorEvent.AfterOpen(showIme))
         if (loaded.large) _events.send(EditorEvent.Message("Large document — styling may be slower"))
@@ -425,44 +437,73 @@ class EditorViewModel(
     }
 
     fun onStart() {
-        viewModelScope.launch {
-            val sess = session ?: return@launch
-            when (val check = documents.checkExternal(sess.ref, sess.baseline)) {
-                ExternalCheck.Unchanged -> {}
+        isForeground = true
+        viewModelScope.launch { checkExternalNow() }
+        restartTreeWatch()
+    }
 
-                is ExternalCheck.Changed -> {
-                    if (autosave.state.value is SaveState.Clean) {
-                        sess.baseline = check.disk.baseline
-                        sess.format = check.disk.format
-                        sess.readOnly = check.disk.readOnly
-                        sess.displayName = check.disk.displayName
-                        val len = check.disk.text.length
-                        val caret = (binding?.caret() ?: 0).coerceIn(0, len)
-                        val scrollY = binding?.scrollY() ?: 0
-                        pendingBeginDirty = false
-                        uiInternal.update {
-                            it.copy(readOnly = check.disk.readOnly, title = NoteFiles.baseName(check.disk.displayName))
-                        }
-                        _events.send(
-                            EditorEvent.Install(InstallRequest(check.disk.text, caret, scrollY, check.disk.readOnly)),
+    /** The actual external-change check (mtime+size, or size+hash for a null-mtime provider — T11's
+     * `DocumentRepository.checkExternal`): silent reload if clean, conflict banner if dirty, `Gone` if deleted.
+     * Called from [onStart] and, for a `TreeDoc`, whenever its folder reports a change (T14). */
+    private suspend fun checkExternalNow() {
+        val sess = session ?: return
+        when (val check = documents.checkExternal(sess.ref, sess.baseline)) {
+            ExternalCheck.Unchanged -> {}
+
+            is ExternalCheck.Changed -> {
+                if (autosave.state.value is SaveState.Clean) {
+                    sess.baseline = check.disk.baseline
+                    sess.format = check.disk.format
+                    sess.readOnly = check.disk.readOnly
+                    sess.displayName = check.disk.displayName
+                    val len = check.disk.text.length
+                    val caret = (binding?.caret() ?: 0).coerceIn(0, len)
+                    val scrollY = binding?.scrollY() ?: 0
+                    pendingBeginDirty = false
+                    uiInternal.update {
+                        it.copy(readOnly = check.disk.readOnly, title = NoteFiles.baseName(check.disk.displayName))
+                    }
+                    _events.send(
+                        EditorEvent.Install(InstallRequest(check.disk.text, caret, scrollY, check.disk.readOnly)),
+                    )
+                } else {
+                    uiInternal.update {
+                        it.copy(
+                            conflict = ConflictState.ChangedOnDisk(check.disk.text, check.disk.baseline),
                         )
-                    } else {
-                        uiInternal.update {
-                            it.copy(
-                                conflict = ConflictState.ChangedOnDisk(check.disk.text, check.disk.baseline),
-                            )
-                        }
                     }
                 }
+            }
 
-                ExternalCheck.Gone -> {
-                    uiInternal.update { it.copy(conflict = ConflictState.Gone) }
-                }
+            ExternalCheck.Gone -> {
+                uiInternal.update { it.copy(conflict = ConflictState.Gone) }
             }
         }
     }
 
+    /** (Re)starts the T14 tree-changes watch for whatever is currently open, if we're STARTED and it's a
+     * `TreeDoc`; otherwise cancels any running watch. Safe to call unconditionally after every install/re-point. */
+    @OptIn(kotlinx.coroutines.FlowPreview::class)
+    private fun restartTreeWatch() {
+        treeChangesJob?.cancel()
+        treeChangesJob = null
+        if (!isForeground) return
+        val ref = session?.ref as? DocRef.TreeDoc ?: return
+        treeChangesJob =
+            viewModelScope.launch {
+                val parent = runCatching { library.parentOf(ref) }.getOrNull() ?: return@launch
+                val store = runCatching { library.storeFor(ref) }.getOrNull() ?: return@launch
+                store
+                    .changes(parent)
+                    .debounce(TREE_WATCH_DEBOUNCE_MS)
+                    .collect { checkExternalNow() }
+            }
+    }
+
     fun onStop() {
+        isForeground = false
+        treeChangesJob?.cancel()
+        treeChangesJob = null
         val snap = binding?.snapshot() ?: lastSnapshot
         val caret = binding?.caret() ?: (handle.get<Int>(KEY_SEL_START) ?: 0)
         val scrollY = binding?.scrollY() ?: (handle.get<Int>(KEY_SCROLL_Y) ?: 0)
@@ -572,6 +613,7 @@ class EditorViewModel(
         private const val KEY_DOC_KEY = "docKey"
         private const val KEY_SEL_START = "selStart"
         private const val KEY_SCROLL_Y = "scrollY"
+        private const val TREE_WATCH_DEBOUNCE_MS = 300L
 
         val Factory: ViewModelProvider.Factory =
             viewModelFactory {

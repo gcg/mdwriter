@@ -1,15 +1,19 @@
 package dev.mdwriter.ui.library
 
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.mdwriter.data.library.DocKey
 import dev.mdwriter.data.library.DocRef
+import dev.mdwriter.data.library.EntryCaps
 import dev.mdwriter.data.library.Excerpt
 import dev.mdwriter.data.library.FolderNode
 import dev.mdwriter.data.library.FolderRef
 import dev.mdwriter.data.library.LibraryEntry
 import dev.mdwriter.data.library.LibraryRepository
 import dev.mdwriter.data.library.LocationId
+import dev.mdwriter.data.library.LocationInfo
+import dev.mdwriter.data.library.LocationState
 import dev.mdwriter.data.library.SearchHit
 import dev.mdwriter.data.library.key
 import dev.mdwriter.data.settings.PositionStore
@@ -127,16 +131,36 @@ class LibraryViewModel(
         val pending: PendingDelete?,
         val query: String?,
         val hits: List<SearchHit>?,
+        val locations: List<LocationInfo>,
     )
 
-    private val rawFlow: Flow<Raw> =
+    private val raw5Flow: Flow<Raw> =
         combine(entriesFlow, settings.settings, pending, query, hitsFlow) { entries, s, p, q, hits ->
-            Raw(entries, s, p, q, hits)
+            Raw(entries, s, p, q, hits, emptyList())
         }
+
+    private val rawFlow: Flow<Raw> =
+        combine(raw5Flow, library.locations) { five, locs -> five.copy(locations = locs) }
 
     val uiState: StateFlow<LibraryUiState> =
         combine(rawFlow, crumbs, session.current) { raw, crumbList, openRef -> buildState(raw, crumbList, openRef) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LibraryUiState.Loading)
+
+    init {
+        // T14: if the current folder's location stops being Ready (unlinked, or a lost grant), fall back to the
+        // internal root rather than showing a listing that can no longer be read.
+        viewModelScope.launch {
+            library.locations.collect { locs ->
+                val loc = currentFolder().location
+                val stillReady =
+                    loc == LocationId.Internal || locs.any { it.id == loc && it.state == LocationState.Ready }
+                if (!stillReady) {
+                    crumbs.value = listOf(Crumb(library.rootOf(LocationId.Internal), ""))
+                    closeSearch()
+                }
+            }
+        }
+    }
 
     private fun isPending(
         entry: LibraryEntry,
@@ -181,8 +205,11 @@ class LibraryViewModel(
                     folderPath = hit?.folderPath,
                 )
             }
+        val locationItems =
+            raw.locations.map { LocationItem(it.id, library.rootOf(it.id), it.name, it.state) }
+        val currentFolderCaps = runCatching { library.capsOf(currentFolder()) }.getOrDefault(EntryCaps.ALL)
         return LibraryUiState.Content(
-            locations = listOf(LocationItem(LocationId.Internal, library.rootOf(LocationId.Internal))),
+            locations = locationItems,
             crumbs = crumbList,
             sortOrder = raw.settings.sortOrder,
             folders = folderEntries,
@@ -191,7 +218,46 @@ class LibraryViewModel(
             query = raw.query.orEmpty(),
             openDocKey = openKey,
             atRoot = crumbList.size <= 1,
+            currentFolderCaps = currentFolderCaps,
         )
+    }
+
+    // ---- T14: locations (linked folders) --------------------------------------------------------------------------
+
+    /** Switches the drawer to [location]'s root; the breadcrumb starts fresh from there. */
+    fun openLocation(location: LocationId) {
+        val name =
+            library.locations.value
+                .firstOrNull { it.id == location }
+                ?.name
+                .orEmpty()
+        crumbs.value = listOf(Crumb(library.rootOf(location), name))
+        closeSearch()
+    }
+
+    fun linkFolder(uri: Uri) =
+        viewModelScope.launch {
+            runCatching { library.linkTree(uri) }.onFailure { reportError(it) }
+        }
+
+    /** "Stop using this folder": never touches a single file (02 §7 / T14 step 9). */
+    fun unlinkFolder(id: LocationId.Tree) =
+        viewModelScope.launch {
+            val name =
+                library.locations.value
+                    .firstOrNull { it.id == id }
+                    ?.name
+                    .orEmpty()
+            runCatching { library.unlinkTree(id) }
+                .onSuccess { _events.send(LibraryEvent.Message("Stopped using '$name'. Files were not changed.")) }
+                .onFailure { reportError(it) }
+        }
+
+    fun reconnectFolder(
+        old: LocationId.Tree,
+        picked: Uri,
+    ) = viewModelScope.launch {
+        runCatching { library.reconnect(old, picked) }.onFailure { reportError(it) }
     }
 
     // ---- new note / new folder --------------------------------------------------------------------------------
@@ -211,8 +277,14 @@ class LibraryViewModel(
                 .onFailure { reportError(it) }
         }
 
-    /** For the "Move…" dialog: the whole folder tree of the current location. */
-    suspend fun folderTree(): List<FolderNode> = library.folderTree(currentFolder().location)
+    /** For the "Move…" dialog: every Ready location as a depth-0 header, followed by its own folder tree
+     * (T14 step 9 / Acceptance). */
+    suspend fun folderTree(): List<FolderNode> =
+        library.locations.value.filter { it.state == LocationState.Ready }.flatMap { loc ->
+            val nodes = library.folderTree(loc.id)
+            val root = nodes.firstOrNull() ?: return@flatMap emptyList()
+            listOf(root.copy(name = loc.name)) + nodes.drop(1)
+        }
 
     // ---- open / navigate ----------------------------------------------------------------------------------------
 

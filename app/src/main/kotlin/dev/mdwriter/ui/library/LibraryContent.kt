@@ -1,5 +1,6 @@
 package dev.mdwriter.ui.library
 
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -36,6 +37,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.mdwriter.R
 import dev.mdwriter.data.library.LibraryEntry
 import dev.mdwriter.data.library.LocationId
+import dev.mdwriter.data.library.LocationState
 import dev.mdwriter.data.settings.SortOrder
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
@@ -63,11 +65,23 @@ fun LibraryDrawer(
     var movingEntry by remember { mutableStateOf<LibraryEntry?>(null) }
     var moveTree by remember { mutableStateOf<List<dev.mdwriter.data.library.FolderNode>>(emptyList()) }
     var creatingFolder by remember { mutableStateOf(false) }
+    var reconnecting by remember { mutableStateOf<LocationId.Tree?>(null) }
 
     LaunchedEffect(movingEntry) {
         val entry = movingEntry
         if (entry != null) moveTree = vm.folderTree()
     }
+
+    val launchPicker =
+        rememberLinkFolderLauncher { uri ->
+            val target = reconnecting
+            if (target != null) {
+                vm.reconnectFolder(target, uri)
+                reconnecting = null
+            } else {
+                vm.linkFolder(uri)
+            }
+        }
 
     LibraryContent(
         state = state,
@@ -87,7 +101,13 @@ fun LibraryDrawer(
         onSortChange = vm::setSort,
         onNewFolder = { creatingFolder = true },
         onCrumbClick = vm::goTo,
-        onLocationClick = { vm.goTo(0) },
+        onLocationClick = vm::openLocation,
+        onUseAFolder = { launchPicker(null) },
+        onStopUsingFolder = vm::unlinkFolder,
+        onReconnect = { id ->
+            reconnecting = id
+            launchPicker(runCatching { Uri.parse(id.treeUri) }.getOrNull())
+        },
         onOpen = vm::open,
         onOpenFolder = vm::openFolder,
         onRename = vm::rename,
@@ -137,7 +157,10 @@ fun LibraryContent(
     onSortChange: (SortOrder) -> Unit,
     onNewFolder: () -> Unit,
     onCrumbClick: (Int) -> Unit,
-    onLocationClick: () -> Unit,
+    onLocationClick: (LocationId) -> Unit,
+    onUseAFolder: () -> Unit,
+    onStopUsingFolder: (LocationId.Tree) -> Unit,
+    onReconnect: (LocationId.Tree) -> Unit,
     onOpen: (LibraryEntry) -> Unit,
     onOpenFolder: (LibraryEntry) -> Unit,
     onRename: (LibraryEntry, String) -> Unit,
@@ -155,8 +178,14 @@ fun LibraryContent(
             onSearchToggle = onSearchToggle,
             onQueryChange = onQueryChange,
             onNewNote = onNewNote,
+            newNoteEnabled = content?.currentFolderCaps?.createChildren != false,
         )
         if (content == null) return@Column
+        val currentLocation =
+            content.crumbs
+                .firstOrNull()
+                ?.folder
+                ?.location
         if (!content.searching) {
             Text(
                 stringResource(R.string.library_locations),
@@ -164,21 +193,36 @@ fun LibraryContent(
                 style = WriterTheme.typography.rowExcerpt,
                 modifier = Modifier.padding(start = WriterDimens.rowPaddingHorizontal, top = 8.dp, bottom = 4.dp),
             )
-            LocationRow(
-                selected =
-                    content.crumbs
-                        .firstOrNull()
-                        ?.folder
-                        ?.location == LocationId.Internal,
-                onClick = onLocationClick,
-            )
+            content.locations.forEach { loc ->
+                when (val id = loc.id) {
+                    LocationId.Internal -> {
+                        LocationRow(
+                            selected = currentLocation == LocationId.Internal,
+                            onClick = { onLocationClick(LocationId.Internal) },
+                        )
+                    }
+
+                    is LocationId.Tree -> {
+                        TreeLocationRow(
+                            name = loc.name,
+                            selected = currentLocation == id,
+                            disconnected = loc.state == LocationState.Disconnected,
+                            onClick = { onLocationClick(id) },
+                            onStopUsing = { onStopUsingFolder(id) },
+                            onReconnect = { onReconnect(id) },
+                        )
+                    }
+                }
+            }
+            UseAFolderRow(onClick = onUseAFolder)
             HairlineDivider()
             BreadcrumbRow(
                 crumbs = content.crumbs,
                 sortOrder = content.sortOrder,
                 onCrumbClick = onCrumbClick,
-                onSortChange = onSortChange,
                 onNewFolder = onNewFolder,
+                onSortChange = onSortChange,
+                newFolderEnabled = content.currentFolderCaps.createChildren,
             )
         }
         if (content.folders.isEmpty() && content.files.isEmpty()) {
@@ -213,6 +257,7 @@ private fun DrawerHeader(
     onSearchToggle: () -> Unit,
     onQueryChange: (String) -> Unit,
     onNewNote: () -> Unit,
+    newNoteEnabled: Boolean = true,
 ) {
     val colors = WriterTheme.colors
     Row(
@@ -263,8 +308,9 @@ private fun DrawerHeader(
             IconButtonPlain(
                 iconRes = R.drawable.ic_edit_square,
                 contentDescription = stringResource(R.string.library_new_note),
-                tint = colors.accent,
+                tint = if (newNoteEnabled) colors.accent else colors.textSecondary,
                 onClick = onNewNote,
+                enabled = newNoteEnabled,
                 modifier = Modifier.padding(start = 4.dp),
             )
         }
@@ -278,11 +324,12 @@ private fun IconButtonPlain(
     tint: androidx.compose.ui.graphics.Color,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
 ) {
     Box(
         modifier
             .size(WriterDimens.touchTarget)
-            .clickable(onClick = onClick),
+            .clickable(enabled = enabled, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
@@ -308,6 +355,7 @@ private fun BreadcrumbRow(
     onCrumbClick: (Int) -> Unit,
     onSortChange: (SortOrder) -> Unit,
     onNewFolder: () -> Unit,
+    newFolderEnabled: Boolean = true,
 ) {
     val colors = WriterTheme.colors
     var menuOpen by remember { mutableStateOf(false) }
@@ -351,6 +399,7 @@ private fun BreadcrumbRow(
                     menuOpen = false
                     onNewFolder()
                 },
+                newFolderEnabled = newFolderEnabled,
             )
         }
     }
@@ -364,6 +413,7 @@ private fun FolderMenu(
     onDismiss: () -> Unit,
     onSortChange: (SortOrder) -> Unit,
     onNewFolder: () -> Unit,
+    newFolderEnabled: Boolean = true,
 ) {
     val colors = WriterTheme.colors
     val byName = sortOrder == SortOrder.NameAToZ || sortOrder == SortOrder.NameZToA
@@ -415,8 +465,20 @@ private fun FolderMenu(
         }
         HairlineDivider()
         DropdownMenuItem(
-            text = { Text(stringResource(R.string.library_new_folder), color = colors.text) },
-            leadingIcon = { Icon(painterResource(R.drawable.ic_create_new_folder), null, tint = colors.text) },
+            text = {
+                Text(
+                    stringResource(R.string.library_new_folder),
+                    color = if (newFolderEnabled) colors.text else colors.textSecondary,
+                )
+            },
+            leadingIcon = {
+                Icon(
+                    painterResource(R.drawable.ic_create_new_folder),
+                    null,
+                    tint = if (newFolderEnabled) colors.text else colors.textSecondary,
+                )
+            },
+            enabled = newFolderEnabled,
             onClick = onNewFolder,
         )
     }

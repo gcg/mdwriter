@@ -1,9 +1,11 @@
 package dev.mdwriter.ui.library
 
 import dev.mdwriter.data.library.DocKey
+import dev.mdwriter.data.library.EntryCaps
 import dev.mdwriter.data.library.FolderRef
 import dev.mdwriter.data.library.LibraryEntry
 import dev.mdwriter.data.library.LocationId
+import dev.mdwriter.data.library.LocationState
 import dev.mdwriter.data.settings.SortOrder
 
 /** One crumb of the breadcrumb; [name] is `""` for a location root — the UI substitutes the localized label
@@ -13,10 +15,13 @@ data class Crumb(
     val name: String,
 )
 
-/** One row in the "Locations" section. Only [LocationId.Internal] until T14 adds linked folders. */
+/** One row in the "Locations" section. [name] is `""` for [LocationId.Internal] (the UI substitutes "On this
+ * device"); [state] is always [LocationState.Ready] for Internal. */
 data class LocationItem(
     val id: LocationId,
     val folder: FolderRef,
+    val name: String = "",
+    val state: LocationState = LocationState.Ready,
 )
 
 /** A file row, ready to render: [entry] backs every action (rename/duplicate/move/delete) and its `lastModified`
@@ -61,5 +66,8 @@ sealed interface LibraryUiState {
         val openDocKey: DocKey?,
         /** Whether the drawer is showing a location's root (T13's folder-up back handler, 01 §6.4 / §H). */
         val atRoot: Boolean,
+        /** Caps of the CURRENT folder itself (T14): gates the new-note glyph / "New folder…" for a read-only
+         * linked folder. Always [EntryCaps.ALL] under "On this device". */
+        val currentFolderCaps: EntryCaps = EntryCaps.ALL,
     ) : LibraryUiState
 }
