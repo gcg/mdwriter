@@ -230,6 +230,7 @@ fun MdWriterRoot(
                     EditorScreen(
                         vm = editorVm,
                         controller = controller,
+                        settings = settings,
                         onMessage = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                         onOpenLibrary = ::toggleLibrary,
                         libraryIcon = libraryIcon,

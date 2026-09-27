@@ -2,6 +2,7 @@ package dev.mdwriter.ui.editor
 
 import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -11,6 +12,7 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.only
@@ -18,18 +20,27 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.mdwriter.R
+import dev.mdwriter.markdown.Stats
+import dev.mdwriter.ui.theme.LocalWriterTypography
 import dev.mdwriter.ui.theme.WidthClass
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterMotion
@@ -149,3 +160,40 @@ fun Modifier.observeTopTap(
             }
         }
     }
+
+/**
+ * The stats line (02 §5, T15): centred in [EditorChrome]'s glyph row, OUTSIDE the fade (never hides outright —
+ * only dims to 60 % while [typing]). Hidden entirely when [stats] is `null` (Word count off). A tap cycles
+ * [StatsDisplay] via [onCycle].
+ */
+@Composable
+fun StatsLine(
+    stats: Stats?,
+    isSelection: Boolean,
+    display: StatsDisplay,
+    typing: Boolean,
+    onCycle: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    if (stats == null) return
+    val colors = WriterTheme.colors
+    val alpha by animateFloatAsState(if (typing) 0.6f else 1f, tween(150), label = "statsAlpha")
+    Text(
+        text = formatStats(stats, display, isSelection),
+        style = LocalWriterTypography.current.stats,
+        color = colors.textSecondary,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier =
+            modifier
+                .testTag("statsLine")
+                .defaultMinSize(minHeight = WriterDimens.touchTarget)
+                .wrapContentHeight(Alignment.CenterVertically)
+                .clickable(
+                    role = Role.Button,
+                    onClickLabel = stringResource(R.string.change_statistic),
+                    onClick = onCycle,
+                ).padding(horizontal = 8.dp)
+                .alpha(alpha),
+    )
+}

@@ -12,19 +12,29 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.mdwriter.R
 import dev.mdwriter.data.document.Snapshot
+import dev.mdwriter.data.settings.Settings
 import dev.mdwriter.editor.EditorController
+import dev.mdwriter.editor.FocusModeKind
+import dev.mdwriter.editor.StatsInput
 import dev.mdwriter.editor.spans.toEditorColors
 import dev.mdwriter.ui.gesture.SwipeDir
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.merge
 
 /**
  * Hosts [controller] (created once by `MdWriterRoot` for the app's lifetime) and wires it to [vm] (T11 step 11,
@@ -42,6 +52,7 @@ import dev.mdwriter.ui.theme.WriterTheme
 fun EditorScreen(
     vm: EditorViewModel,
     controller: EditorController,
+    settings: Settings,
     onMessage: (String) -> Unit,
     onOpenLibrary: () -> Unit,
     libraryIcon: Int,
@@ -56,6 +67,34 @@ fun EditorScreen(
     val colors = WriterTheme.colors
     val density = LocalDensity.current
     val scrollThresholdPx = remember(density) { with(density) { WriterDimens.chromeScrollUpThreshold.toPx() } }
+
+    // ---- T15: push Focus Mode / typewriter settings straight onto the controller ---------------------------------
+    LaunchedEffect(controller, settings.focusMode) { controller.focusMode = settings.focusMode }
+    LaunchedEffect(controller, settings.typewriter) { controller.typewriter = settings.typewriter }
+
+    // ---- T15: stats pipeline (01 §7 — debounced, computed on Default, never main) ----------------------------------
+    LaunchedEffect(controller, settings.wordCount) {
+        if (!settings.wordCount) {
+            vm.onStats(null)
+        } else {
+            val source =
+                object : StatsSource {
+                    override val triggers: Flow<Unit> =
+                        merge(
+                            controller.edits.map { },
+                            controller.selection
+                                .map { it.start to it.end }
+                                .distinctUntilChanged()
+                                .map { },
+                        )
+                    override val version: Long get() = controller.version
+                    override val selection: Pair<Int, Int> get() = controller.selection.value.let { it.start to it.end }
+
+                    override fun snapshot(): StatsInput = controller.statsInput()
+                }
+            StatsPipeline(source).flow().collect(vm::onStats)
+        }
+    }
 
     LaunchedEffect(vm, controller) {
         vm.events.collect { e ->
@@ -120,6 +159,14 @@ fun EditorScreen(
     val canUndo by controller.canUndo.collectAsStateWithLifecycle()
     val canRedo by controller.canRedo.collectAsStateWithLifecycle()
     var overflowExpanded by remember { mutableStateOf(false) }
+    var statsDisplay by rememberSaveable { mutableStateOf(StatsDisplay.Words) }
+
+    val focusLabels =
+        listOf(
+            stringResource(R.string.focus_off),
+            stringResource(R.string.focus_sentence),
+            stringResource(R.string.focus_paragraph),
+        )
 
     Box(modifier.fillMaxSize()) {
         EditorHost(
@@ -147,7 +194,24 @@ fun EditorScreen(
                     onUndo = controller::undo,
                     onRedo = controller::redo,
                     onNewNote = onNewNote,
+                    focus =
+                        OverflowChoice(
+                            options = focusLabels,
+                            selected = settings.focusMode.ordinal,
+                            onSelect = { index -> vm.setFocusMode(FocusModeKind.entries[index]) },
+                        ),
+                    typewriter = OverflowToggle(checked = settings.typewriter, onChange = vm::setTypewriter),
+                    wordCount = OverflowToggle(checked = settings.wordCount, onChange = vm::setWordCount),
                 ),
+            stats = { chromeVisible ->
+                StatsLine(
+                    stats = uiState.stats,
+                    isSelection = uiState.statsSelection,
+                    display = statsDisplay,
+                    typing = !chromeVisible,
+                    onCycle = { statsDisplay = statsDisplay.next() },
+                )
+            },
             modifier = Modifier.align(Alignment.TopCenter),
         )
         uiState.conflict?.let { conflict ->

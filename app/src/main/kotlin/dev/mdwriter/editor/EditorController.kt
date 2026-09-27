@@ -18,6 +18,7 @@ import dev.mdwriter.editor.spans.PaintTextMeasurer
 import dev.mdwriter.editor.spans.SpanFactory
 import dev.mdwriter.editor.spans.SpanMaterializer
 import dev.mdwriter.markdown.MarkdownHighlighter
+import dev.mdwriter.markdown.MdSpan
 import dev.mdwriter.markdown.SmartEdit
 import dev.mdwriter.markdown.TextEdit
 import dev.mdwriter.ui.toolbar.ToolbarAction
@@ -50,6 +51,16 @@ data class EditEvent(
 data class ScrollChange(
     val y: Int,
     val dy: Int,
+)
+
+/** T15: a main-thread snapshot for [dev.mdwriter.ui.editor.StatsPipeline] — [spans] is a defensive `toList()` copy
+ * ([MarkdownHighlighter.spans] may return live internal state; 01 §6.1 — the highlighter is main-thread only). */
+data class StatsInput(
+    val text: String,
+    val spans: List<MdSpan>,
+    val selStart: Int,
+    val selEnd: Int,
+    val version: Long,
 )
 
 /**
@@ -135,6 +146,19 @@ class EditorController(
     val highlightEnabled: Boolean get() = style.highlightSyntax
 
     val isReadOnly: Boolean get() = editText.readOnly
+
+    /** T15 (01 §6.2): both delegate straight to the EditText, which owns the overlay/scroll behaviour itself. */
+    var focusMode: FocusModeKind
+        get() = editText.focusMode
+        set(value) {
+            editText.focusMode = value
+        }
+
+    var typewriter: Boolean
+        get() = editText.typewriter
+        set(value) {
+            editText.typewriter = value
+        }
 
     // Declared BEFORE `init` (Kotlin runs property initializers/init blocks in textual order): `init` below
     // calls refreshAccessibilityActions(), which reads both of these.
@@ -316,6 +340,18 @@ class EditorController(
     }
 
     fun snapshot(): String = editText.text.toString()
+
+    /** T15: a main-thread stats snapshot for [dev.mdwriter.ui.editor.StatsPipeline] — `.toList()` copies the
+     * highlighter's span list before it crosses to `Dispatchers.Default` (01 §6.1: main-thread only, may return
+     * live internal state). */
+    fun statsInput(): StatsInput =
+        StatsInput(
+            text = snapshot(),
+            spans = highlighter?.spans()?.toList() ?: emptyList(),
+            selStart = editText.selectionStart,
+            selEnd = editText.selectionEnd,
+            version = version,
+        )
 
     fun requestFocus() {
         editText.requestFocus()

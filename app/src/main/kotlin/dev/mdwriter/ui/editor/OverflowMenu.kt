@@ -18,6 +18,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.unit.dp
 import dev.mdwriter.R
 import dev.mdwriter.ui.theme.WriterDimens
@@ -154,6 +157,8 @@ fun OverflowMenu(
                 )
             }
         }
+        // Typewriter scrolling / Word count are checkbox-style toggles (T15, step 9): unlike every other row,
+        // clicking one does NOT dismiss the menu — you may want to flip both in the same open.
         actions.typewriter?.let { tw ->
             DropdownMenuItem(
                 text = { Text(stringResource(R.string.overflow_typewriter), color = colors.text) },
@@ -164,7 +169,11 @@ fun OverflowMenu(
                         colors = SwitchDefaults.colors(checkedTrackColor = colors.accent),
                     )
                 },
-                onClick = act { tw.onChange(!tw.checked) },
+                onClick = { tw.onChange(!tw.checked) },
+                modifier =
+                    Modifier.semantics {
+                        toggleableState = if (tw.checked) ToggleableState.On else ToggleableState.Off
+                    },
             )
         }
         actions.wordCount?.let { wc ->
@@ -177,7 +186,11 @@ fun OverflowMenu(
                         colors = SwitchDefaults.colors(checkedTrackColor = colors.accent),
                     )
                 },
-                onClick = act { wc.onChange(!wc.checked) },
+                onClick = { wc.onChange(!wc.checked) },
+                modifier =
+                    Modifier.semantics {
+                        toggleableState = if (wc.checked) ToggleableState.On else ToggleableState.Off
+                    },
             )
         }
         actions.onSettings?.let { onSettings ->

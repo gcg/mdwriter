@@ -3,6 +3,7 @@ package dev.mdwriter.editor
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Rect
 import android.graphics.text.LineBreaker
 import android.text.InputType
@@ -18,6 +19,7 @@ import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import android.widget.EditText
+import androidx.core.view.doOnNextLayout
 import dev.mdwriter.R
 import dev.mdwriter.editor.spans.EditorColors
 import dev.mdwriter.editor.spans.TaskSpan
@@ -53,6 +55,66 @@ class MarkdownEditText(
     private var downX = 0f
     private var downY = 0f
 
+    // ---- T15: Focus Mode (draw-time overlay, hard rule 5 — no spans) --------------------------------------------
+
+    // `lateinit`, assigned at the end of `init` below, not inline: TextView's own super constructor calls
+    // onSelectionChanged/onTextChanged (the "EMPTY text" setText this class's own KDoc warns about) BEFORE any of
+    // this class's property initializers run — the same hazard [mdUndo]/[smartInput]/etc. already guard against.
+    // `::sentenceBreaker.isInitialized` in [onSelectionChanged] is the guard for that narrow window.
+    private lateinit var focusOverlay: FocusOverlay
+    private lateinit var sentenceBreaker: IcuSentenceBreaker
+    private var focus = FocusRange.NONE
+    private var focusStale = false
+    private val focusViewport = Rect()
+
+    /** Off / Sentence / Paragraph (02 §5). Setter refreshes the range, then invalidates. */
+    var focusMode: FocusModeKind = FocusModeKind.Off
+        set(value) {
+            field = value
+            refreshFocus()
+            invalidate()
+        }
+
+    private fun refreshFocus(): Boolean {
+        val n = FocusRanges.compute(text ?: "", selectionStart, selectionEnd, focusMode, sentenceBreaker)
+        focusStale = false
+        if (n == focus) return false
+        focus = n
+        return true
+    }
+
+    /** Called by [EditorScrollView.onScrollChanged]: invalidates only once the live viewport has left the band
+     * drawn last time (a ScrollView scroll does not redraw the EditText on its own — its RenderNode is reused). */
+    fun onViewportChanged() {
+        if (focusMode == FocusModeKind.Off) return
+        val sv = parent as? EditorScrollView ?: return
+        sv.childViewport(focusViewport)
+        if (focusViewport.top < focusOverlay.drawnTop || focusViewport.bottom > focusOverlay.drawnBottom) invalidate()
+    }
+
+    // ---- T15: typewriter scrolling --------------------------------------------------------------------------------
+
+    /** Keeps the caret line at 45 % of the viewport while typing (02 §5/§11). The setter re-runs the ONE padding
+     * call site (T05's [EditorScrollView.applyGeometry] — hard rule 2 allows this: it is a settings change), then
+     * keeps the text from jumping once the new layout lands. */
+    var typewriter: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            val sv = parent as? EditorScrollView
+            val oldScrollY = sv?.scrollY ?: 0
+            val oldPaddingTop = paddingTop
+            sv?.applyGeometry()
+            doOnNextLayout {
+                if (value) {
+                    bringPointIntoView(selectionEnd, true)
+                } else {
+                    val deltaTop = paddingTop - oldPaddingTop
+                    sv?.scrollTo(0, (oldScrollY - deltaTop).coerceAtLeast(0))
+                }
+            }
+        }
+
     init {
         // Must run before any setText (incl. the super constructor's own EMPTY text): the FIRST document must
         // already be an MdEditable, or it starts as a plain SpannableStringBuilder with 162 ms keystrokes later.
@@ -74,6 +136,8 @@ class MarkdownEditText(
         // Hard rule 10: suppress the system floating toolbar but keep handles/IME. Deliberately no
         // customInsertionActionModeCallback — the caret "Paste" pill must stay (T09 AC8).
         customSelectionActionModeCallback = HideSystemSelectionToolbar
+        focusOverlay = FocusOverlay()
+        sentenceBreaker = IcuSentenceBreaker()
     }
 
     fun applyColors(c: EditorColors) {
@@ -84,6 +148,8 @@ class MarkdownEditText(
         textSelectHandle?.let { setTextSelectHandle(it.mutate().apply { setTint(c.accent) }) }
         textSelectHandleLeft?.let { setTextSelectHandleLeft(it.mutate().apply { setTint(c.accent) }) }
         textSelectHandleRight?.let { setTextSelectHandleRight(it.mutate().apply { setTint(c.accent) }) }
+        focusOverlay.setColor(focusOverlayArgb(c.bg, c.text, c.focusDim))
+        if (focusMode != FocusModeKind.Off) invalidate()
     }
 
     /** The EditText never scrolls itself (01 §4.4, factcheck A15). `bringPointIntoView` still reaches the ScrollView. */
@@ -231,6 +297,62 @@ class MarkdownEditText(
         super.onSelectionChanged(selStart, selEnd)
         mdUndo?.onSelectionChanged(selStart, selEnd)
         selectionUi?.onSelectionChanged(selStart, selEnd)
+        if (::sentenceBreaker.isInitialized && refreshFocus()) invalidate()
+    }
+
+    /** T15: the range is stale after any text change; recomputed lazily at the top of [onDraw] (never here — this
+     * runs on every keystroke, before the new layout exists). */
+    override fun onTextChanged(
+        text: CharSequence,
+        start: Int,
+        lengthBefore: Int,
+        lengthAfter: Int,
+    ) {
+        super.onTextChanged(text, start, lengthBefore, lengthAfter)
+        focusStale = true
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+        if (focusMode == FocusModeKind.Off) return
+        val l = layout ?: return
+        val sv = parent as? EditorScrollView ?: return
+        if (focusStale) refreshFocus()
+        sv.childViewport(focusViewport)
+        val h = focusViewport.height()
+        val top = (focusViewport.top - h).coerceAtLeast(0)
+        val bottom = (focusViewport.bottom + h).coerceAtMost(height)
+        focusOverlay.draw(
+            canvas,
+            this,
+            l,
+            focus,
+            caretOffset = if (selectionStart == selectionEnd) selectionStart else -1,
+            top,
+            bottom,
+        )
+    }
+
+    /** T15: only the two-argument overload is overridden — the one-argument [bringPointIntoView] delegates to it.
+     * When typewriter mode is on, the caret line is re-centred through [EditorScrollView.animateScrollTo] instead
+     * of the platform's own `requestRectangleOnScreen` path (never call `super` in that branch — it would fight
+     * the animator, hard rule 2/pitfalls). */
+    override fun bringPointIntoView(
+        offset: Int,
+        requestRectWithoutFocus: Boolean,
+    ): Boolean {
+        val l = layout
+        val sv = parent as? EditorScrollView
+        if (!typewriter || l == null || sv == null || isLayoutRequested || !(isFocused || requestRectWithoutFocus)) {
+            return super.bringPointIntoView(offset, requestRectWithoutFocus)
+        }
+        if (sv.isUserScrolling) return false // never fight a drag/fling
+        val line = l.getLineForOffset(offset.coerceIn(0, length()))
+        val center = totalPaddingTop + (l.getLineTop(line) + l.getLineBottom(line, false)) / 2
+        val target = TypewriterMath.targetScrollY(top, center, sv.viewportHeight(), sv.maxScrollY())
+        if (target == sv.scrollY) return false
+        sv.animateScrollTo(target)
+        return true // do NOT call super — it would scroll too
     }
 
     override fun onFocusChanged(
