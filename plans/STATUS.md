@@ -2393,3 +2393,240 @@ defaults misclassified a gesture, so none were retuned.
   (`androidx.window.core.layout` vs. this app's own `WidthClass`), not a discrepancy to reconcile now.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T14 — Linked folders via SAF — DONE — 2026-09-27
+**What changed:**
+- `data/storage/SafIo.kt` (new): `SafIo(resolver)` — `PROJECTION` (doc id/display name/mime/last-modified/size/
+  flags), `FLAG_SUPPORTS_TRASH_37` (literal `0x10000`, not the real API-37 field, to avoid `InlinedApi`).
+  `query(tree, parentDocumentId): List<Row>` (ONE query per folder — never `DocumentFile.listFiles()`),
+  `stat(uri): Row?`, `displayName(uri)`, `flags(uri)`, `readAll(uri, maxBytes)` (throws `TooLarge`/`NotFound`),
+  `readHead(uri, maxBytes)` (capped prefix read, for excerpts — never reads the whole file), `writeWt(uri, bytes)`
+  (`"wt"` with a `"w"` fallback, `truncate`+`fsync` if regular, re-queries `COLUMN_SIZE` to verify — hard rule 15).
+  Every member maps `SecurityException` -> `StorageException(PermissionLost)`, `FileNotFoundException` -> `NotFound`.
+  Queries use the 4-arg `ContentResolver.query(uri, projection, Bundle?, CancellationSignal?)` overload, NOT the
+  classic 5-arg one — see Deviations (a real, reproducible bug, not a style choice). **This is the T18 reuse
+  surface**: `writeWt`, `readAll`/`readHead`, `stat`, `displayName`, `flags`, `PROJECTION`.
+- `data/storage/SafTreeStore.kt` (new): `SafTreeStore(treeUri, resolver, safIo, trashBin, io, clock) : DocumentStore`.
+  `list`: one `SafIo.query` per folder, filters dotfiles + unsupported extensions (folders never filtered by
+  extension), sorts client-side via `NoteFiles.DEFAULT_ORDER`, maps `COLUMN_FLAGS` -> `EntryCaps` (`capsOf`), and
+  fetches excerpts afterwards — up to 300 files, 4 concurrent (`Semaphore(4)`) `SafIo.readHead` calls, LRU-500 cache
+  keyed `"docId|lastModified|size"`. `read`/`write`/`stat`/`displayName`/`create` (`NoteFiles.mimeFor` — hard rule
+  15)/`createFolder`/`rename` (returns the ref built from the RETURNED uri)/`trash` (app-side safety copy via
+  `trashBin.copyIn` FIRST, then `DocumentsContract.trashDocument` on API 37+ with `FLAG_SUPPORTS_TRASH_37`, else
+  `deleteDocument`)/`restore` (always `null` — SAF's own trash revokes our grant)/`move` (same-tree:
+  `FLAG_SUPPORTS_MOVE` + a cached-or-`findDocumentPath`-derived parent -> `DocumentsContract.moveDocument`; falls
+  back to copy+trash otherwise)/`changes` (merges local-mutation notifications with a `ContentObserver` registered
+  on the SAME tree-shaped children `Uri` the local writes emit against, cursor kept open only while collected, per
+  Reference C). Extra members `parentFolder(documentId)` (cache, else `findDocumentPath`) and
+  `folderCaps(documentId)` (caps of a folder itself, for the current-folder new-note/new-folder gating) used by
+  `LibraryRepository`.
+- `data/library/TreeGrants.kt` (new): `TreeGrants(resolver)` — `take`/`release`/`isGranted`/`rootName`. `take` maps
+  `SecurityException` -> `PermissionLost`.
+- `data/library/LocationInfo.kt` (new): `LocationState { Ready, Disconnected }`, `LocationInfo(id, name, state)`.
+- `data/library/LibraryRepository.kt` (modified): new constructor params `treeStoreFactory: (String) ->
+  DocumentStore` (one `SafTreeStore` cached per tree URI string) and `treeGrants: TreeGrants?` (both defaulted so
+  every T11/T12 test call site is unaffected). `val locations: StateFlow<List<LocationInfo>>` (Internal first, then
+  linked trees in `Settings.linkedTrees` order). `storeFor(ref)`/`storeFor(location)` now resolve `Tree` (throwing
+  `PermissionLost` only when a location is KNOWN Disconnected — an unknown tree still gets a live attempt, so a
+  cold-start race before the first `revalidate()` still surfaces the real underlying error). `rootOf(Tree)` /
+  `parentOf` (now `suspend` — every existing call site was already inside a suspend function, confirmed by
+  compiling) resolve through `SafTreeStore.parentFolder`. `capsOf(folder): EntryCaps` (new — folder-level caps for
+  the current folder, `ALL` for Internal). `linkTree(treeUri): LocationInfo`, `unlinkTree(id)` (releases the grant,
+  drops the cached store, clears a matching `lastOpenDoc`, NEVER touches files), `reconnect(old, picked)` (same URI
+  re-takes the grant; a different URI replaces it at the same list index and releases the old grant if still
+  held), `revalidate()` (Ready iff granted AND the root document `stat`s; never auto-unlinks — platform §2.13).
+  `move(ref, to)`: same-location delegates to the store; cross-location (Internal<->Tree, or Tree<->Tree) goes
+  through a new private `crossLocationMove` — read, create-unique-name, write, verify size, THEN trash the source;
+  on any failure after create, trash the new (partial) doc and rethrow, leaving the source untouched.
+- `ui/library/LinkFolderLauncher.kt` (new): `rememberLinkFolderLauncher(onPick): (Uri?) -> Unit` wrapping
+  `ActivityResultContracts.OpenDocumentTree()`; `null` initial falls back to `primary:Documents`.
+- `ui/library/LibraryUiState.kt` (modified): `LocationItem` gained `name`/`state` fields; `Content` gained
+  `currentFolderCaps: EntryCaps = EntryCaps.ALL`.
+- `ui/library/LibraryViewModel.kt` (modified): `locations` now folds `library.locations` into `uiState` (a second
+  `combine` layered on top of the existing 5-way one, since `kotlinx.coroutines.flow.combine` has no 6-arg
+  overload); an `init {}` block watches `library.locations` and resets the crumb stack to the internal root the
+  moment the CURRENT folder's location stops being Ready (unlinked or lost its grant) — never leaves the drawer
+  showing a listing it can no longer read. New: `openLocation(location)` (replaces the old hard-coded
+  `goTo(0)` — starts a fresh crumb at that location's own root, named from `LocationInfo.name`), `linkFolder(uri)`,
+  `unlinkFolder(id)` (sends the "Stopped using '<name>'. Files were not changed." message), `reconnectFolder(old,
+  picked)`. `folderTree()` changed from "the current location's tree" to "every Ready location's tree, each as its
+  own depth-0 header" (Move… dialog, T14 step 9/Acceptance).
+- `ui/library/FileRow.kt` (modified): `clickableRow` un-privatized (shared with `LibraryContent.kt`). New
+  `TreeLocationRow` (Ready: plain row + long-press "Stop using this folder" menu; Disconnected: name in
+  `textSecondary` + "Disconnected" second line + accent `TextButton` "Reconnect") and `UseAFolderRow`.
+- `ui/library/LibraryContent.kt` (modified): `LibraryDrawer` wires `rememberLinkFolderLauncher`, routing a picked
+  Uri to `linkFolder` or, mid-reconnect, to `reconnectFolder`. `LibraryContent`'s "Locations" section now renders
+  every `LocationItem` (Internal row, one `TreeLocationRow` per linked tree, then `UseAFolderRow`); `onLocationClick`
+  changed from `() -> Unit` to `(LocationId) -> Unit`; the new-note glyph and "New folder…" menu item are now
+  disabled (with `textSecondary` tint) when `currentFolderCaps.createChildren` is false.
+- `ui/editor/EditorViewModel.kt` (modified): extracted the body of `onStart()`'s external-check logic into a
+  private `checkExternalNow()`, reused by a new `restartTreeWatch()` — while STARTED (`isForeground`, set in
+  `onStart`/cleared in `onStop`) AND the open doc is a `TreeDoc`, collects `library.storeFor(ref).changes(parentOf)`
+  debounced 300 ms -> `checkExternalNow()`. Restarted after every install/re-point (`installAndOpen`,
+  `onCurrentRefChanged`), always cancelled in `onStop()`.
+- `ui/root/MdWriterRoot.kt` (modified): a new `LifecycleEventEffect(ON_START)` calls `container.library.revalidate()`
+  then `.invalidate()` (a coroutine on the existing `scope`).
+- `AppContainer.kt` (modified): the anonymous `TrashBin` `internalStore` used to construct is now a named
+  `trashBin` val, shared with every `SafTreeStore` (so a linked folder's deleted files land in the SAME `.trash/`
+  T10's `purgeTrash()` already sweeps). New `safIo: SafIo`, `treeGrants: TreeGrants`; `library` now passes
+  `treeStoreFactory` (builds a real `SafTreeStore` per tree URI) and `treeGrants`. `init {}` also fires
+  `library.revalidate()` once on `dispatchers.io` at startup (pre-seeding `locations` before `MdWriterRoot`'s own
+  `ON_START` runs it again).
+- `res/values/strings.xml`: `library_use_a_folder`, `library_disconnected`, `library_reconnect`,
+  `library_stop_using_folder`.
+- `data/storage/TrashBin.kt`: **no change needed** — T10 already shipped `copyIn(displayName, bytes, meta)` exactly
+  as this task's step 5 specifies; `SafTreeStore.trash` calls it with `source="tree"`, `treeUri`, `documentId`,
+  `deletedAt`, `originalRelPath=""`. `InternalStore.purgeTrash()`'s 30-day sweep is source-agnostic (reads
+  `meta.json`'s `deletedAt` regardless of `source`), so it already purges tree-sourced trash entries too.
+- Tests (all new): `test/kotlin/dev/mdwriter/testing/TestDocumentsProvider.kt` (file-backed `DocumentsProvider`,
+  authority `dev.mdwriter.test.documents`, root doc id `"root"`; reproduces both traps named in Reference D —
+  `"w"` opens without truncating vs `"wt"`, and `createDocument("text/plain", "Note.md")` -> `"Note.md.txt"` — plus
+  a `throwSecurity` flag for the permission-loss test and `nullLastModified` for the T11-conflict test); `SafIoTest`
+  (6): round-trip, truncate-on-shorter-write, `displayName`, flags, `readHead` never exceeds its cap, a deleted
+  doc's `stat` is null. `SafTreeStoreTest` (9): `listUsesOneQueryAndFilters`, `createMdUsesTextMarkdown`,
+  `createCollisionReadsBackName`, `renameReturnsNewRef`, `writeShorterContentTruncates`,
+  `deleteRemovesAndKeepsSafetyCopy`, `capsFollowFlags`, `changesEmitsOnNotify`, `permissionLossMapsToPermissionLost`.
+  `LibraryRepositoryTreeTest` (5): `linkAddsLocationWithRootName`, `unlinkReleasesGrantAndKeepsFiles`,
+  `revalidateMarksDisconnectedWithoutGrant`, `moveInternalToTreeCopiesThenTrashes`, `moveFailureKeepsSource`.
+  `DocumentRepositorySafTest` (3, `nullLastModified = true`): `sameSizeExternalChangeIsConflict`,
+  `differentSizeExternalChangeIsConflict`, `noExternalChangeSaves`.
+- `plans/01-architecture.md` §3: corrected the T14 file-placement line (the task's own prose had `TreeGrants.kt`/
+  `LocationInfo.kt`/`LinkFolderLauncher.kt` all listed under `storage/`; they actually live in `data/library/` and
+  `ui/library/` respectively, matching the task file's own "Files to create/modify" list, which is authoritative).
+
+**Verification:**
+- **Robolectric DOES route into a real `DocumentsProvider`** — the task's own Pitfalls section anticipated needing
+  the `androidTest` fallback, but it was not needed. Root cause of the one real wall hit: `ContentResolver.query`'s
+  classic 5-arg overload (`uri, projection, selection, selectionArgs, sortOrder`) reaches
+  `DocumentsProvider`'s own legacy `query(Uri, String[], String, String[], String)`, which real AOSP code
+  (confirmed by decompiling `shadows-framework-4.17.jar`) throws `UnsupportedOperationException("Pre-Android-O
+  query format not supported.")` from, by design, since Android O. Fix: `SafIo`/`SafTreeStore` call the 4-arg
+  `query(uri, projection, Bundle?, CancellationSignal?)` overload instead — confirmed via
+  `javap`-decompiling `ShadowContentResolver.class` that this exact overload calls straight into
+  `ContentProvider.query(Uri, String[], Bundle, CancellationSignal)`, which `DocumentsProvider` handles correctly.
+  This is a real, general finding (not test-only): `SafIo` never uses the classic 5-arg query anywhere.
+- `./gradlew :app:testDebugUnitTest --tests 'dev.mdwriter.data.storage.Saf*' --tests 'dev.mdwriter.data.library.*'
+  --tests 'dev.mdwriter.data.document.DocumentRepositorySafTest'` -> BUILD SUCCESSFUL, all 23 new tests green.
+  Full `:app:testDebugUnitTest` -> **349 tests total, 0 failures** (326 pre-existing + 23 new). Acceptance 2–4
+  (exact scenario names) confirmed via the per-class JUnit XML: `SafIoTest=6`, `SafTreeStoreTest=9`,
+  `LibraryRepositoryTreeTest=5`, `DocumentRepositorySafTest=3`.
+- `make format && make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` -> **BUILD SUCCESSFUL** (105 tasks: spotless,
+  full JVM suite, Android Lint, release R8 build). One real ktlint finding fixed properly (not suppressed):
+  `compose:parameter-naming` on `rememberLinkFolderLauncher`'s `onPicked` param (past tense) -> renamed `onPick`.
+  Lint SARIF: **0 errors**, 36 results (all pre-existing warning classes; no new error-level findings).
+- Emulator (`emulator-5554`, Android 17/API 37, debug app, real system Files picker
+  `com.google.android.documentsui`) — Acceptance 5–9, all verified live, no shortcuts:
+  - Pushed `a.md` (`"# A\n\nfirst\n"`), `.hidden.md` (same content) and an empty `x.png` to
+    `/sdcard/Documents/Notes`. Drawer -> "Use a folder…" -> real Files picker -> Documents -> Notes -> "USE THIS
+    FOLDER" -> the real "Allow mdwriter (debug) to access folder?" consent dialog -> ALLOW. **Acceptance 5**: a
+    "Notes" row appeared under Locations (folder icon); opening it listed exactly `a` (title, extension stripped)
+    with excerpt "first", NOT `.hidden.md` or `x.png`.
+  - **Acceptance 6**: tapped "+" while "Notes" was current -> a new blank note opened with the IME up; typed
+    `hello_from_saf`; 3 s later `adb shell cat /sdcard/Documents/Notes/Untitled.md` showed exactly that text.
+  - **Acceptance 7**: with the drawer open on the "Notes" listing, `adb push`ed a modified `a.md` (`"changed
+    outside"`, same file) from the host — within 2 s (no reopen, no manual refresh) the row's excerpt updated to
+    "changed outside" and its date to the new time, re-sorted to the top by newest-first — confirms
+    `SafTreeStore.changes()`'s `ContentObserver` path fires for a genuinely external (non-app) write, not just
+    the app's own mutations.
+  - **Acceptance 8**: opened `a.md`, tapped into the body (making it dirty), typed a few characters, then
+    immediately (`adb push` within ~1 s) overwrote `a.md` externally with different content -> the "Changed on
+    disk" banner appeared with **Reload · Keep mine · Save both**, editor still live underneath. Tapped Reload:
+    the editor and the banner both updated to the disk text, banner gone — full round trip verified, not just the
+    banner's appearance.
+  - **Acceptance 9**: long-pressed the "Notes" location row -> "Stop using this folder" (no confirmation dialog)
+    -> the row disappeared immediately, snackbar "Stopped using 'Notes'. Files were not changed." -> current
+    folder fell back to "On this device" root (per the "current folder's location became unlinked" rule).
+    `adb shell ls -la /sdcard/Documents/Notes` afterwards still listed all four files (`.hidden.md`, `Untitled.md`,
+    `a.md`, `x.png`) untouched.
+  - **Disconnected state** (Definition of done: describe how it was forced, since `cmd uri revoke` isn't
+    available): linked a second folder `/sdcard/Documents/Notes2` (containing `b.md`), confirmed it Ready, then
+    deleted the underlying folder from the host (`adb shell rm -rf .../Notes2`) **without** touching the app's
+    persisted grant or its own settings — this reproduces a real scenario (the user deletes/moves the linked
+    folder from outside the app) rather than an artificial one. Pressed Home, relaunched (a real `ON_START`) ->
+    the drawer's "Notes2" row showed the name in grey with a second "Disconnected" line and an accent "Reconnect"
+    `TextButton` exactly per 02 §7 / the task's row spec — a genuine on-device Disconnected row, not simulated.
+    The grant-only-revoked case (grant lost but the folder itself still exists) is covered instead by the JVM test
+    `revalidateMarksDisconnectedWithoutGrant`, which calls `treeGrants.release(tree)` directly then
+    `revalidate()` — deliberately not attempted on-device since there is no non-destructive way to revoke a single
+    persisted SAF grant from the shell without also wiping the app's own settings (`pm clear` resets both the OS
+    grant table entry for the package AND this app's `linkedTrees`/DataStore state at once, which would make the
+    location vanish from the list entirely rather than show Disconnected — not the scenario being tested).
+  - Screenshots (described, not committed): `/tmp/t14-6-drawer-notes.png` / `t14-9-opened-a.png` (linked, Ready
+    state: "Notes" bold+selected under Locations, breadcrumb "Notes", file rows with real relative dates/excerpts,
+    the open document's accent bar). `/tmp/t14-16-disconnected.png` (Disconnected state: "Notes2" row in grey,
+    "Disconnected" second line, blue "Reconnect" button, "On this device" still Ready/selected below).
+    `/tmp/t14-10-conflict.png` (the live "Changed on disk" banner over the editor).
+
+**Deviations from the plan:**
+- **`ContentResolver.query`'s classic 5-arg overload cannot be used against `DocumentsProvider` at all, on real
+  Android, not just under Robolectric** (see Verification) — the task's Reference C sketch itself used the 5-arg
+  form (`resolver.query(children, SafIo.PROJECTION, null, null, null)`); this was corrected everywhere (`SafIo`,
+  `SafTreeStore.changes`) to the 4-arg `(uri, projection, Bundle?, CancellationSignal?)` overload. This is a
+  correctness fix, confirmed against real AOSP source via decompilation, not a Robolectric-only workaround — the
+  Robolectric fallback to `androidTest` described in the task's Pitfalls was consequently never needed.
+- **`DocumentsContract.trashDocument` returns `Uri?` (the trashed document's own URI), not `Boolean`** — corrected
+  from the Reference B sketch's implicit boolean usage; `SafTreeStore.trash` now treats a non-null return as
+  success.
+- **`LibraryRepository.parentOf(ref: DocRef)` changed from a plain function to `suspend fun`** (needed for the
+  `TreeDoc` branch's `SafTreeStore.parentFolder`, which may fall back to `findDocumentPath`, a real IO call).
+  Confirmed every existing call site (`AutoNamer.onLeave`, `EditorViewModel.saveBufferAsConflictCopy`/
+  `saveBufferAsNewAndOpen`, `LibraryViewModel.rename`/`duplicate`/`move`) was already inside a suspend function
+  before this change, so no call site needed further changes beyond the signature itself compiling.
+  `LibraryRepository.nameOf(ref)` was NOT changed (still non-suspend, still `null` for non-Internal refs) — every
+  caller already has a `?: store.displayName(ref)` suspend fallback, so widening it wasn't needed.
+- **`LibraryRepository`'s new `treeStoreFactory`/`treeGrants` constructor params are both defaulted** (a
+  throwing-by-default factory, `treeGrants: TreeGrants? = null`) rather than required — this keeps every T11/T12
+  test's existing 2-3-arg `LibraryRepository(...)` construction compiling unchanged, per the "add, don't replace"
+  guidance in T11/T12's own STATUS notes-for-next-task. A test that never links/revalidates a tree (most of
+  `LibraryViewModelTest`, `EditorViewModelTest`, etc.) never touches either param.
+  `LibraryRepository.seedLocationsForTest(locations)` is a small additional test seam (not asked for by the task)
+  that lets a future test populate `locations` without a real `TreeGrants`/`ContentResolver`; unused by this
+  task's own tests (which all construct a real `TreeGrants(resolver)` against `TestDocumentsProvider` instead,
+  since Robolectric supports persisted-URI-permission shadowing directly — confirmed via `javap` on
+  `ShadowContentResolver`), kept because it is a natural, low-cost seam for T19/future tasks' own tests.
+- **`LibraryViewModel`'s 6-way `uiState` combine is two nested 5-way/2-way `combine` calls**, not a single 6-arg
+  one — `kotlinx.coroutines.flow.combine` has explicit overloads only up to 5 flows (plus a reified-array vararg
+  form that would have required an unrelated refactor of the existing `Raw` shape). No behavioural difference.
+- No library/plugin versions bumped, no new dependencies added. Every icon this task needed (`ic_folder`,
+  `ic_folder_open`, `ic_create_new_folder`) was already shipped by T02/T12.
+
+**Ktlint suppressions (file / rule / reason):** none. The one real finding (`compose:parameter-naming` on
+`onPicked`) was fixed by renaming, not suppressed (see Verification).
+
+**Known issues / follow-ups:**
+- One `make check` run hit a transient `spotlessKotlinGradle` failure ("Could not read path
+  .../compileReleaseKotlin/classes/.../MainActivity.class") — a Gradle task-ordering/configuration-cache race
+  unrelated to this task's changes (no source touched between runs); a bare re-run of `make check
+  KEYSTORE_DIR=/tmp/mdwriter-agent-key` immediately after was BUILD SUCCESSFUL (105 tasks). Not chased further.
+- The emulator (`emulator-5554`, Android 17/API 37) was left with the debug app's `Welcome.md` untouched, plus
+  scratch state from this task's own on-device verification: a linked-then-unlinked `/sdcard/Documents/Notes`
+  (still containing all 4 pushed/created files, never deleted, per Acceptance 9's own guarantee), a still-linked-
+  but-Disconnected `Notes2` location (its underlying folder was deliberately deleted from the host to test the
+  Disconnected row — the app's own `linkedTrees` setting still references it, exactly as the "never auto-unlink"
+  rule requires), and an internal `Untitled.md`/conflict-banner scratch trail from the manual pass. All scratch,
+  nothing destructive; `~/.config/mdwriter/` untouched, no release build installed, no physical device touched at
+  any point (README rule 5).
+- `SafTreeStore.move`'s `findDocumentPath` fallback (used when a document was never listed by this exact store
+  instance) is exercised by code review and the interface contract, not a dedicated unit test — `TestDocumentsProvider`
+  implements `findDocumentPath` (Reference-D-style, walking parent links), but no test currently forces the
+  `parentOf` cache to miss before a rename/move. Low risk (the cache is warmed by every `list()` call, which the
+  library drawer always does before offering rename/move), left as a follow-up if a future task's own testing
+  surfaces a real gap here.
+
+**Notes for the next task:**
+- **T18 reuses `SafIo`** directly (`writeWt`, `readAll`/`readHead`, `stat`, `displayName`, `flags`, `PROJECTION`)
+  for `ExternalDocStore` — none of it is `SafTreeStore`-specific. T18 should NOT reintroduce a 5-arg
+  `resolver.query(...)` call anywhere (see Deviations) — always the 4-arg `(uri, projection, Bundle?,
+  CancellationSignal?)` overload.
+  - **T18/T19**: `LibraryRepository.locations`, `linkTree`/`unlinkTree`/`reconnect`/`revalidate`, and
+  `TreeGrants`/`LocationInfo`/`LocationState` are the full linked-folder surface; a future Settings screen wanting
+  to list/manage linked folders reads `library.locations` the same way `LibraryViewModel` does.
+- `LibraryRepository.capsOf(folder: FolderRef): EntryCaps` is new (folder-level caps, not per-entry) — any future
+  UI gating a folder-level action (not a listed file/folder row) should use this rather than re-deriving caps.
+- `SafTreeStore`'s excerpt cache (LRU-500, `"docId|lastModified|size"`) and `LibraryRepository.prefix`'s cache
+  (also LRU-500, `DocKey+lastModified+size` from T12) are two SEPARATE caches at two different layers — this is
+  intentional (the tree store's cache serves `list()`'s bulk excerpt fetch cheaply; `LibraryRepository.prefix` is
+  the general fallback/search path used for both Internal and Tree docs) — do not try to unify them.
+- `EditorViewModel.restartTreeWatch()`/`checkExternalNow()`/`isForeground` are the seam for "live external change
+  while a `TreeDoc` is open" — a future task adding more per-document live-watching behaviour should extend this
+  rather than adding a second, competing `onStart`/`onStop`-scoped collector.

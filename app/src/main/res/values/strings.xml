@@ -55,6 +55,10 @@
     <string name="library_name_empty">Name can\'t be empty</string>
     <string name="library_name_exists">A note with this name already exists</string>
     <string name="library_folder">Folder</string>
+    <string name="library_use_a_folder">Use a folder…</string>
+    <string name="library_disconnected">Disconnected</string>
+    <string name="library_reconnect">Reconnect</string>
+    <string name="library_stop_using_folder">Stop using this folder</string>
 
     <!-- Editor chrome, overflow menu, shortcuts (T13) -->
     <string name="cd_library">Library</string>

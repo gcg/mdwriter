@@ -211,6 +211,14 @@ fun MdWriterRoot(
             }
         }
         LifecycleEventEffect(Lifecycle.Event.ON_STOP) { libraryVm.onStop() }
+        // T14: revalidate every linked folder's grant + reachability on every ON_START (a lost grant shows the
+        // location as Disconnected — never auto-unlinked, platform §2.13), then force a re-list.
+        LifecycleEventEffect(Lifecycle.Event.ON_START) {
+            scope.launch {
+                container.library.revalidate()
+                container.library.invalidate()
+            }
+        }
 
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
         val drawerWidth = minOf(WriterDimens.drawerMaxWidth.value, screenWidthDp - WriterDimens.drawerEdgeGap.value).dp
