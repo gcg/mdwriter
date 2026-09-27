@@ -28,6 +28,16 @@ class AppShortcutsTest {
     }
 
     @Test
+    fun ctrlFIsFind() {
+        assertThat(AppShortcuts.map(KeyEvent.KEYCODE_F, ctrl = true)).isEqualTo(AppCommand.Find)
+    }
+
+    @Test
+    fun ctrlShiftFIsNull() {
+        assertThat(AppShortcuts.map(KeyEvent.KEYCODE_F, ctrl = true, shift = true)).isNull()
+    }
+
+    @Test
     fun nWithoutCtrlIsNull() {
         assertThat(AppShortcuts.map(KeyEvent.KEYCODE_N, ctrl = false)).isNull()
     }

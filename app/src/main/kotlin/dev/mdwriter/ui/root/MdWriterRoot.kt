@@ -186,11 +186,19 @@ fun MdWriterRoot(
             editorVm.closePreview()
         }
 
+        // T17: the find bar's own `onClose` (its own × button, Esc, or the root BackHandler below) — never a
+        // second, differently-shaped find handler (task step 6).
+        fun closeFindBar() {
+            controller.clearFind(selectFocused = true)
+            controller.requestFocus()
+            editorVm.closeFind()
+        }
+
         fun openPreview() {
             controller.collapseSelection()
             controller.hideIme()
             if (!expanded) scope.launch { drawerState.close() }
-            editorVm.closeFind()
+            if (editorVm.uiState.value.findOpen) closeFindBar()
             editorVm.openPreview(
                 controller.snapshot(),
                 controller.caret(),
@@ -201,7 +209,8 @@ fun MdWriterRoot(
 
         fun openLibrary() {
             controller.collapseSelection()
-            if (editorVm.uiState.value.previewOpen) closePreview() // T17 closes find here too, once it exists.
+            if (editorVm.uiState.value.previewOpen) closePreview()
+            if (editorVm.uiState.value.findOpen) closeFindBar()
             if (expanded) paneVisible = true else scope.launch { drawerState.open() }
         }
 
@@ -236,9 +245,23 @@ fun MdWriterRoot(
         LaunchedEffect(commands) {
             commands.collect { cmd ->
                 when (cmd) {
-                    AppCommand.NewNote -> libraryVm.newNote()
-                    AppCommand.ToggleLibrary -> toggleLibrary()
-                    AppCommand.Preview -> if (editorVm.uiState.value.previewOpen) closePreview() else openPreview()
+                    AppCommand.NewNote -> {
+                        libraryVm.newNote()
+                    }
+
+                    AppCommand.ToggleLibrary -> {
+                        toggleLibrary()
+                    }
+
+                    AppCommand.Preview -> {
+                        if (editorVm.uiState.value.previewOpen) closePreview() else openPreview()
+                    }
+
+                    AppCommand.Find -> {
+                        if (editorVm.uiState.value.previewOpen) closePreview()
+                        if (!expanded) scope.launch { drawerState.close() }
+                        editorVm.openFind()
+                    }
                 }
             }
         }
@@ -311,6 +334,7 @@ fun MdWriterRoot(
                         libraryIcon = libraryIcon,
                         onNewNote = libraryVm::newNote,
                         onPreview = ::openPreview,
+                        onCloseFind = ::closeFindBar,
                         swipeEnabled = ::swipeEnabled,
                         swipeAccepts = ::swipeAccepts,
                         onSwipeArmedDown = {
@@ -400,7 +424,7 @@ fun MdWriterRoot(
             onShare = null, // T18 supplies this
         )
 
-        BackHandler(enabled = ui.findOpen) { editorVm.closeFind() }
+        BackHandler(enabled = ui.findOpen) { closeFindBar() }
         BackHandler(enabled = selection.start != selection.end) { controller.collapseSelection() }
     }
 }

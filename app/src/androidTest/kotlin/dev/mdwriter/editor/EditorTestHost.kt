@@ -21,15 +21,21 @@ import dev.mdwriter.debug.EditorPerfActivity
  */
 internal object EditorTestHost {
     /** Launches [EditorPerfActivity] with an arbitrary starting document (`perfEdits = 0`: install only, no
-     * scripted-edit harness) and waits until its first layout pass has happened. */
+     * scripted-edit harness) and waits until its first layout pass has happened. [sample] (`"small"`/`"100k"`/
+     * `"300k"`, via [dev.mdwriter.debug.SampleDocs.forExtra]) generates a large document INSIDE the activity
+     * process instead of a literal [text] — passing a 300k-char string as a literal Intent extra hits the
+     * platform's Binder transaction size limit (`TransactionTooLargeException`, confirmed on-device: it silently
+     * crashes the whole instrumentation run, not just one test). [text], when non-null, always wins. */
     fun launch(
-        text: String = "",
-        selection: Int = text.length,
+        text: String? = "",
+        selection: Int = text?.length ?: 0,
         readOnly: Boolean = false,
+        sample: String? = null,
     ): ActivityScenario<EditorPerfActivity> {
         val intent =
             Intent(ApplicationProvider.getApplicationContext(), EditorPerfActivity::class.java).apply {
-                putExtra("text", text)
+                text?.let { putExtra("text", it) }
+                sample?.let { putExtra("sample", it) }
                 putExtra("selection", selection)
                 putExtra("readOnly", readOnly)
                 putExtra("perfEdits", 0)

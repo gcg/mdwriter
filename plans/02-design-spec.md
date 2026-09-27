@@ -39,6 +39,8 @@ visible but quiet, nothing else on screen while you type.
 | `divider` | `#E2E2E2` | `#2E2E2E` | `#1F1F1F` | 1 **px** hairlines |
 | `scrim` | `#52000000` | `#99000000` | `#B3000000` | drawer/sheet scrim |
 | `danger` | `#D93A2B` | `#FF6B5E` | `#FF6B5E` | "Delete" text only |
+| `searchMatch` | `#4DFFB000` | `#26FFB84D` | `#26FFB84D` | every find match (T17) |
+| `searchMatchFocused` | `#99FF9F00` | `#55FFB84D` | `#55FFB84D` | the focused find match (T17) |
 
 - **No dynamic colour (Material You).** Build `lightColorScheme/darkColorScheme` from the tokens
   (`background=bg, surface=surface, surfaceContainer*=surface, onBackground=onSurface=text,

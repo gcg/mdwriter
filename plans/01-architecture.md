@@ -354,6 +354,7 @@ Single `StateFlow<EditorUiState>` via `stateIn(viewModelScope, WhileSubscribed(5
 | Stats | debounce 400 ms, snapshot on main, compute on `Default` |
 | Preview HTML | `Default`; WebView load on main |
 | SAF listing | `IO`, one `ContentResolver.query` per folder with a full projection |
+| Find search | snapshot on main, search on `Default`, 150 ms debounce; stale result (version changed) dropped |
 
 ## 8. State & process death
 

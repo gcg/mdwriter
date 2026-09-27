@@ -3082,3 +3082,251 @@ defaults misclassified a gesture, so none were retuned.
   T14 established) — nothing SAF-specific was duplicated.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T17 — Find & replace bar with TextView search highlights — DONE — 2026-09-27
+**Step 1 javap verification (before any code was written), API 37 (`android-37.0/android.jar`):**
+```
+$ javap -cp ~/Library/Android/sdk/platforms/android-37.0/android.jar android.widget.TextView | grep -iE "searchresult|bringPointIntoView"
+  public static final int FOCUSED_SEARCH_RESULT_INDEX_NONE;
+  public boolean bringPointIntoView(int);
+  public boolean bringPointIntoView(int, boolean);
+  public int getFocusedSearchResultHighlightColor();
+  public int getFocusedSearchResultIndex();
+  public int getSearchResultHighlightColor();
+  public int[] getSearchResultHighlights();
+  public void setFocusedSearchResultHighlightColor(int);
+  public void setFocusedSearchResultIndex(int);
+  public void setSearchResultHighlightColor(int);
+  public void setSearchResultHighlights(int...);
+```
+All 8 methods plus the `FOCUSED_SEARCH_RESULT_INDEX_NONE` constant are present — proceeded with the TextView
+search-highlight approach exactly as specified, never falling back to spans.
+
+**What changed:**
+- `editor/TextSearch.kt` (new): pure object (no `android.*` import) — `findAll`, `indexAtOrAfter`, `shift`,
+  `dropRange`, `HighlightWindow`/`window`, `replaceOne`, `replaceAll`. Copied verbatim from the task's Reference
+  §A (only KDoc added).
+- `editor/FindSession.kt` (new): `data class FindResult(count, index, truncated)` + `internal class FindSession`
+  — owns `ranges`/`focused`/`truncated`, a `TextWatcher` attached only while `ranges` is non-empty that calls
+  `TextSearch.shift` on every text change (typing, undo, replace, or an edit from any other source) before
+  pushing to TextView via `setSearchResultHighlights`/`setFocusedSearchResultIndex`. `afterReplace` does the
+  `dropRange` step so a replaced match is never re-targeted. `push(reveal=true)` calls the two-argument
+  `et.bringPointIntoView(offset, true)` (the EditText is unfocused while the find field has focus). Matches
+  Reference §B almost verbatim; only the KDoc guard-grep sentence was reworded (see Deviations) to keep
+  Acceptance 8's `grep` a true negative.
+- `editor/EditorController.kt` (modified): `private val findSession = FindSession(editText)`; `val findResult:
+  StateFlow<FindResult>`; `suspend fun find(query, matchCase): FindResult` (snapshot on main, search on
+  `Dispatchers.Default`, drops a stale result if `version` changed mid-search); `findNext()`/`findPrevious()`;
+  `replaceCurrent(replacement): Boolean` (no-op when read-only or no focused match, else one `apply()` +
+  `findSession.afterReplace`); `suspend fun replaceAll(replacement): Int` (one `apply()` covering first..last
+  match, never a loop); `clearFind(selectFocused: Boolean = false)`; `selectedTextForFind(): String?` (1..200
+  chars, no `\n`). `install()` now calls `findSession.clear()` first.
+- `editor/spans/EditorStyle.kt` / `EditorColors`: added `searchMatch: Int` / `searchMatchFocused: Int`, mapped
+  via `toEditorColors()` (`toArgb()`).
+- `editor/MarkdownEditText.kt` (`applyColors`): calls `setSearchResultHighlightColor`/
+  `setFocusedSearchResultHighlightColor` from the new `EditorColors` fields.
+- `ui/theme/WriterColors.kt`: added `searchMatch`/`searchMatchFocused` tokens to `WriterColors` and all 3
+  palettes (light `#4DFFB000`/`#99FF9F00`, dark/black `#26FFB84D`/`#55FFB84D`, per 02 §2's own table).
+- `ui/find/FindBar.kt` (new): `FindBar` (stateless — `TextFieldValue` query/replacement, `FindResult`, every
+  callback a plain lambda; row 1 = search icon + query field + counter/"N replaced" + previous/next/close; row
+  2 = match-case/replace-toggle +, when open, the replacement field + Replace + All) and `FindBarHost` (owns
+  `rememberSaveable` query/matchCase/replaceOpen/replacement state so it survives rotation and persists across
+  opening/closing the bar, the 150 ms debounce `LaunchedEffect(query.text, matchCase, editVersion, visible)`,
+  the focus-token-driven prefill-from-selection + focus + select-all effect, the "N replaced" 2 s message, and a
+  `DisposableEffect` safety-net `clearFind()`). A private `FindToggle` (icon toggle) and `FindTextButton` (see
+  Deviations) round out the file.
+- `ui/editor/EditorScreen.kt` (modified): root is now `Column { FindBarHost; Box(weight 1f) { EditorHost;
+  EditorChrome; ConflictBanner } }`; `EditorChrome`'s `visible` and the `stats` slot are both gated on
+  `!uiState.findOpen`; `EditorHost` gets a new `statusProtectionVisible = !uiState.findOpen`;
+  `OverflowActions.onFind = vm::openFind`.
+- `ui/editor/EditorHost.kt`: new `statusProtectionVisible: Boolean = true` param gating the status-bar
+  protection strip Box (the find bar paints `surface` behind the status bar itself while open).
+- `ui/editor/EditorViewModel.kt`: `_findFocusToken: MutableStateFlow<Int>` + `val findFocusToken`; `openFind()`
+  (`findOpen = true`, `findFocusToken++`); `installAndOpen`'s `uiInternal.update` now also sets `findOpen =
+  false` (closes find on a real document switch). `closeFind()` unchanged from T13.
+- `ui/root/AppCommands.kt`: `AppCommand.Find` + `KEYCODE_F -> Find` (no shift) in `AppShortcuts.map`.
+- `ui/root/MdWriterRoot.kt`: local `fun closeFindBar()` (`controller.clearFind(selectFocused = true)` →
+  `controller.requestFocus()` → `editorVm.closeFind()`) — the ONE close sequence, used by both the root
+  `BackHandler(enabled = ui.findOpen)` and `FindBarHost`'s own `onClose` (passed through `EditorScreen`'s new
+  `onCloseFind` param); `AppCommand.Find` in the commands collector closes preview/drawer then calls
+  `editorVm.openFind()`; `openPreview()`/`openLibrary()` now also call `closeFindBar()` when find is open.
+- `MainActivity.kt`: added a "Find" (Ctrl+F) `KeyboardShortcutInfo` to `onProvideKeyboardShortcuts`.
+- `app/src/main/res/values/strings.xml`: `find_hint`, `replace_hint`, `find_previous`, `find_next`, `find_close`,
+  `find_match_case`, `find_replace_toggle`, `find_replace_one`, `find_replace_all`,
+  `find_replace_all_description`, `find_replaced`, `shortcut_find`.
+- Icons: all of `ic_search/ic_find_replace/ic_match_case/ic_expand_less/ic_expand_more/ic_close` already existed
+  from T02 (confirmed via `ls`, none downloaded).
+- `app/src/androidTest/kotlin/dev/mdwriter/editor/EditorTestHost.kt` (modified, additive): `launch`'s `text`
+  param is now nullable (default unchanged, `""`) and gained a `sample: String? = null` param
+  (`sample?.let { putExtra("sample", it) }`) — see Deviations (the 300k-char device test needs this).
+- Tests (all new unless noted): `U/editor/TextSearchTest.kt` (31), `U/ui/theme/SearchColorsTest.kt` (3),
+  `U/ui/find/FindBarTest.kt` (17), `U/ui/root/AppShortcutsTest.kt` (+2, `ctrlFIsFind`/`ctrlShiftFIsNull`),
+  `U/ui/theme/WriterColorsTest.kt` (extended, no new test methods — the two new tokens' hex values added to the
+  existing per-palette table), `I/editor/FindDeviceTest.kt` (10, cases 1-10 from step 8).
+
+**Verification (emulator `emulator-5554`, Android 17/API 37; throwaway key `/tmp/mdwriter-agent-key`):**
+- Acceptance 1 (`./gradlew :app:testDebugUnitTest --tests "…TextSearchTest" --tests "…SearchColorsTest" --tests
+  "…FindBarTest"`): all green. `TextSearchTest` covers every row of step 2's table verbatim (case-
+  (in)sensitivity, non-overlapping matches, a surrogate-pair query, accented case-folding incl. the documented
+  Straße/strasse limitation, empty/too-long query, a `limit`, a match right after `\n`; `indexAtOrAfter`'s 4
+  cases; `shift`'s 6 branches incl. "insert at match end keeps the match" (the exact case `afterReplace`'s
+  `dropRange` exists for); `dropRange`; `window`'s 4 cases incl. the literal `n=1000,max=500` focused-900/10/-1
+  numbers from the task; `replaceAll`'s exact `"aaa"`→`"aaaaaa"` example and the caret-inside-a-match /
+  caret-between-matches cases; `replaceCurrentNeverReselectsReplacedText` reproduces the task's own
+  `shift(r,7,0,1)` → `dropRange(r,4,8)` → `[0,3,9,12]` example digit-for-digit).
+  `SearchColorsTest` computed (not just asserted against a fixture): light contrast(text, focusedOnBg) ≈ 10.8,
+  dark ≈ 5.02, black ≈ 6.05 (all ≥ 4.5); luminance deltas (focusedOnBg vs matchOnBg) ≈ 0.171/0.052/0.041 (all ≥
+  0.03) — computed independently in Python first to confirm the tokens would pass before writing the test.
+  `FindBarTest` covers every case in step 7 (counter formats incl. truncation and the empty-query/zero-hit
+  cases, Enter/Shift+Enter/Escape/IME-search key routing, previous/next enablement, match-case click +
+  `assertIsOn`/`assertIsOff`, the replace toggle's field+buttons and its absence when read-only, every icon's
+  content description, and the 360 dp width case).
+- Acceptance 2 (`make test-device DEVICE=emulator-5554`): **73/73 green** (63 pre-existing + 10 new
+  `FindDeviceTest` cases, exactly matching step 8's numbered list 1-10). Two real bugs found and fixed while
+  getting this to a clean run — see Deviations (the `TransactionTooLargeException` process crash, and the
+  install-still-in-flight race for the 300k case). `findOn300kCharsFinishesUnder500msAndCapsTheHighlightWindow`:
+  the `find("e", …)` call itself (not the document install, not the debounce — there is none inside the
+  controller) finished in single-digit milliseconds, comfortably under the 500 ms budget; match count exceeded
+  `HIGHLIGHT_WINDOW` (500) as expected for a 300k-char lorem-ipsum-like document, and
+  `getSearchResultHighlights().size` was exactly capped at `2 * HIGHLIGHT_WINDOW` (1000).
+- Acceptance 3: the javap output above is pasted verbatim into this entry; `FindSession.kt` uses exactly those
+  method/constant names (`setSearchResultHighlights`, `getSearchResultHighlights`,
+  `setFocusedSearchResultIndex`, `getFocusedSearchResultIndex`, `setSearchResultHighlightColor`,
+  `setFocusedSearchResultHighlightColor`, `FOCUSED_SEARCH_RESULT_INDEX_NONE`, `bringPointIntoView(Int, Boolean)`).
+- Acceptance 4 (manual, `emulator-5554`, real `MainActivity`/`MdWriterRoot`, Welcome note, light mode):
+  `adb shell input keycombination 113 34` (Ctrl+F) opened the bar with Gboard visible and the caret in the query
+  field; `input text the` showed `1 / 4` with every match tinted `searchMatch` and the focused one visibly
+  darker/more saturated (`searchMatchFocused`) — confirmed both by eye and with a 2×-zoomed crop
+  (`/tmp/t17-find-zoom.png`) showing the first "The" clearly deeper amber than the second; a hardware Enter
+  (`keyevent 66`) moved the counter to `2 / 4` and the focus tint swapped to the newly-focused match, the
+  previous one fading back to the pale tint; first Back hid the IME only (bar stayed open, counter/query
+  unchanged, `/tmp/t17-back1.png`); second Back closed the bar and left the focused match ("The" in "The
+  toolbar") selected with our own T09 selection pill showing and no system floating toolbar
+  (`/tmp/t17-back2.png`) — matches the acceptance wording exactly.
+- Acceptance 5 screenshots (all described here, not committed per README rule 9):
+  - `/tmp/t17-find-light.png` — light mode, bar open, query "the", counter `1 / 4`, IME visible, every icon
+    (search/Aa/find_replace/expand_less/expand_more/close) crisp and unclipped.
+  - `/tmp/t17-find-dark.png` — dark mode (`cmd uimode night yes`), same query, counter `2 / 4` (token persisted
+    across a re-open via `rememberSaveable`), focused vs unfocused highlight clearly distinguishable against the
+    dark background, all icons visible, IME suggestion strip shows correctly-cased "The"/"they" chips.
+  - `/tmp/t17-replace-360dp-v2.png` — `wm density 597` (360 dp on this 1344 px-wide emulator), replace row open:
+    "Replac…" (ellipsized, single line — see Deviations for the bug this caught and fixed), "Replace" and "All"
+    both visible and tappable, the query field ("the") visibly wider than the Replace+All buttons combined,
+    nothing clipped or overlapping.
+- Acceptance 6 (manual): typed a stray character directly into the document body while the find bar was open
+  with "the" active (4 matches) — no crash, the existing "The" highlight in "There" stayed correctly anchored
+  to exactly that word (not shifted onto the edited word), confirming `FindSession`'s watcher keeps ranges valid
+  on an edit that originates OUTSIDE the find bar itself, not just on `apply()`-driven replace edits.
+- Acceptance 7 (manual, Welcome note): "the" → replace-all → "THE" (`4 replaced` shown); closed the find bar
+  (×) — `closeFindBar()`'s `controller.requestFocus()` returns focus to the `EditText`; one hardware Ctrl+Z then
+  fully restored the original casing everywhere in one step (verified by eye scrolling back to the top — see
+  Known issues for the one focus-routing subtlety this surfaced). `FindDeviceTest.replaceAllReplacesEveryMatchAsOneUndoStep`
+  covers the same one-undo-step guarantee programmatically via `controller.snapshot()` equality before/after.
+- Acceptance 8: `grep -rn "setSpan\|beginBatchEdit" app/src/main/kotlin/dev/mdwriter/editor/FindSession.kt` →
+  no matches (rc 1).
+- `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → **BUILD SUCCESSFUL** (105 tasks: spotless, full JVM suite,
+  Android Lint, release R8 build). Lint SARIF: **0 errors**, 39 warnings (up from 36 pre-T17, no new
+  error-level findings). JVM total: **:app 474 + :core:markdown 250 = 724 tests, 0 failures**.
+
+**Deviations from the plan:**
+- **Real bug found via `FindBarTest`'s own 360 dp case, not by inspection: Material3's `TextButton` enforces a
+  58 dp `minWidth` regardless of the caller's own `modifier`** (the constraint is applied on an inner `Row`
+  inside the framework composable, below where a caller's modifier attaches) — two of them ("Replace"/"All")
+  ate ~116 dp of the 360 dp row, leaving the replacement field at 76 dp, short of the required 96 dp. Fixed by
+  replacing both with a private `FindTextButton` (a plain `Text` + `Modifier.clickable`, no enforced min width,
+  `accent`/`textSecondary` colouring by `enabled`) — not a Material3 substitute anywhere else in this file (the
+  icon toggles were already custom `Box`+`clickable`, matching this codebase's established preference for
+  custom chrome over stock Material3 widgets, e.g. `FormatToolbar`'s own `PillButton`).
+- **Real bug found the same way: the "Replace with" placeholder `Text` had no `maxLines`/`overflow`, so at
+  360 dp it wrapped to 2 lines and visually bled below the 36 dp pill** (Compose does not clip a child to a
+  fixed-height parent unless something explicitly clips it). Fixed by adding `maxLines = 1, overflow =
+  TextOverflow.Ellipsis` to both hint `Text`s (the query field's "Find" hint too, defensively, though it never
+  wraps in practice).
+- **Real, on-device-only bug found while writing `FindDeviceTest`'s 300k-char case: a literal 300,000-char
+  `Intent` extra crashes the whole instrumentation process** (`android.os.TransactionTooLargeException` /
+  `Binder buffer full`, confirmed via `adb logcat`: `Process 6369 exited due to signal 9 (Killed)`, taking every
+  other queued test down with it as "Process crashed"). `EditorTestHost.launch`'s `text` param is exactly what
+  T08 built for "an arbitrary starting document" — it has no size-safe path for a document this large. Fixed by
+  extending `launch` (additively: `text` is now nullable, defaulting to the same `""`, plus a new `sample:
+  String? = null` that forwards to `EditorPerfActivity`'s own pre-existing `sample` extra, which generates the
+  large text INSIDE the activity process via `SampleDocs.forExtra` — exactly the mechanism T07's own perf
+  harness already uses for 100k/300k, just never previously threaded through `EditorTestHost`). No other test
+  file's calls to `launch` changed behaviour (the new param is additive with a safe default).
+- **A second real bug in the same test, found immediately after fixing the first: `EditorTestHost.launch`'s own
+  `waitUntil { editText.layout != null }` can pass while `install()`'s off-main `buildStyledDocument` for a
+  300k-char document is still in flight** (the EditText already has a real, non-null `Layout` for its initial
+  EMPTY text, laid out before `install()`'s coroutine ever resumes from `Dispatchers.Default`) — a `find` right
+  after `launch` alone raced this and deterministically saw `count == 0` (matching `FindResult.NONE`, i.e. the
+  `version`-mismatch guard in `EditorController.find` silently discarding a stale... no — confirmed by
+  isolating: the document was still literally empty/short at that point, not a version-guard artifact). Fixed
+  by polling `waitUntil { activity.controller.snapshot().length > 200_000 }` before calling `find` in this one
+  test, rather than changing the shared `EditorTestHost.launch` wait condition (which is correct as-is for every
+  other, small-literal-text caller).
+- **`FindBarHost`'s debounce `LaunchedEffect` includes `visible` in its key list**, one key beyond the task's own
+  Reference §D sketch (`LaunchedEffect(query, matchCase, editVersion)`). Without it, a text edit elsewhere in
+  the document after the bar had been closed (find session already cleared via `onClose`) would still re-fire
+  the effect on the NEXT `editVersion` bump and silently re-populate/re-show highlights on a closed bar. Guarded
+  with `if (!visible) return@LaunchedEffect` inside the block AND added to the key list, so closing cancels any
+  in-flight debounced search outright rather than letting it complete pointlessly.
+- **`selectedTextForFind`'s pre-fill semantics on `focusToken` change**: when `controller.selectedTextForFind()`
+  returns `null` (no eligible selection), `FindBarHost` keeps whatever query text was already there instead of
+  clearing it, and always re-selects-all of the resulting text either way. The task's own wording ("the query is
+  pre-filled … each `findFocusToken` change repeats this") did not fully specify the null-selection case; this
+  interpretation matches the common "reopen find, previous query still selected, ready to type over" pattern and
+  was judged not to rise to a STOP-AND-ASK (no acceptance criterion pins down this exact case).
+- **`ui/editor/OverflowMenu.kt` needed no code change** — T13 had already built the `onFind` icon-row slot
+  completely (icon, content description, dismiss-then-run wiring); only the call site
+  (`EditorScreen.kt`'s `OverflowActions(...)` construction) needed `onFind = vm::openFind`.
+- **`WriterColorsTest`/`AppShortcutsTest` were extended in place** (new hex rows / two new `ctrlF…` test methods)
+  rather than leaving the new tokens/shortcut uncovered by those files' own "executable copy of the spec" /
+  "every mapping" framing — not in the task's explicit file list, but a direct, same-shape continuation of what
+  those files already assert about their respective specs.
+- No library/plugin versions bumped, no new dependencies added. `01-architecture.md` §3/§6.2 already matched
+  this task's final signatures exactly from planning (confirmed, not edited); §7 gained one new row ("Find
+  search: snapshot on main, search on `Default`, 150 ms debounce…"). `02-design-spec.md` §2 gained the two
+  token rows (were not yet present, unlike §3/§6.2 above).
+
+**Known issues / follow-ups:**
+- **Ctrl+Z pressed while keyboard focus is still inside the find bar's OWN query/replace text field undoes
+  that Compose field's own last edit, not the document** (confirmed manually: typing "THE" into the replace
+  field then Ctrl+Z removed only the trailing "E", leaving "TH" in the field itself). This is standard,
+  expected Compose focus-scoped behaviour (any focused text input claims Ctrl+Z for itself first) and matches
+  how the task's own acceptance criterion 7 is verified (`controller.undo()` directly / "eyeball it on the
+  emulator" via closing the bar first) — not a bug, but worth flagging for T20's accessibility/hardening pass:
+  there is currently no way to undo a replace-all from the keyboard WHILE the find bar stays open (the Overflow
+  Undo button is also unreachable then, since the chrome is hidden while `findOpen`). Closing the bar first
+  (×, Esc, or Back — any of which calls `closeFindBar()` and returns focus to the editor) is the correct,
+  already-working path.
+- A document silently reloaded out from under an open find bar (the T11 external-change-check path, e.g. a
+  linked SAF folder's file changed on disk while find is open) clears the find session via
+  `EditorController.install()` but does not flip `EditorUiState.findOpen` back to `false` — the bar would stay
+  visually open with a stale/empty counter until the user closes it manually or types again. Not covered by any
+  acceptance criterion here (only a real document *switch* is required to close find); flagged for whoever next
+  touches the external-reload path.
+- The emulator (`emulator-5554`, Android 17/API 37) was left in compact/phone mode, light mode (`wm density
+  reset`, `cmd uimode night no` both run), `dev.mdwriter.debug`'s app data freshly cleared (`pm clear`) so the
+  next task gets an untouched Welcome note. A pre-existing `dev.mdwriter` (release) package was already present
+  on this emulator from an earlier session (not installed or touched by this task — rule 13 forbids removing it
+  without being asked). No `~/.config/mdwriter/` access; `/tmp/mdwriter-agent-key/` still holds the shared
+  throwaway signing key.
+
+**Notes for the next task:**
+- `TextSearch`/`FindSession`/`EditorController`'s find API (§6.2) is the final contract — T20/T21/T22 should
+  reuse `TextSearch.HIGHLIGHT_WINDOW`/`MAX_MATCHES` rather than re-deriving similar constants.
+- `EditorViewModel.findFocusToken` (a plain incrementing `StateFlow<Int>`, not tied to `findOpen`'s own value)
+  is the "re-focus and select all, even on a repeat Ctrl+F while already open" signal — reuse this pattern if a
+  future task needs a similar "do this again on request, even with no boolean state change" signal.
+- `ui/find/FindBar.kt`'s `FindToggle`/`FindTextButton` (both `private`) are this codebase's second and third
+  hand-rolled compact button styles (`FormatToolbar`'s `PillButton` is the first) — a future task adding more
+  find-bar-adjacent chrome should reuse these rather than reaching for Material3 `IconToggleButton`/`TextButton`
+  again (both have enforced min-size behaviour that doesn't fit this app's dense chrome rows, per this task's
+  own two 360 dp bugs above).
+- T20 (hardening: accessibility, large screens) should look at: (a) the Ctrl-Z-while-find-bar-focused known
+  issue above, (b) whether the find bar needs its own accessibility custom actions (next/previous/replace)
+  given IconButton content descriptions alone may not be enough for a screen-reader user to discover the row-2
+  toggles quickly, (c) the external-reload-while-find-open gap noted above.
+- `EditorTestHost.launch`'s new `sample` parameter (forwarding to `EditorPerfActivity`'s pre-existing `sample`
+  extra) is now available to any future instrumented test that needs a large (100k/300k) document without
+  risking `TransactionTooLargeException` — prefer it over a literal multi-hundred-KB `text` argument.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
