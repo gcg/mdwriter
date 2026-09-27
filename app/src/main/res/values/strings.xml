@@ -99,4 +99,11 @@
     <string name="find_replace_all_description">Replace all</string>
     <string name="find_replaced">%d replaced</string>
     <string name="shortcut_find">Find</string>
+
+    <!-- Intents, share in/out, export all notes (T18) -->
+    <string name="read_only_prefix">Read-only · </string>
+    <string name="save_copy_to_library">Save a copy to Library</string>
+    <string name="library_export_all_notes">Export all notes…</string>
+    <string name="library_export_done">Exported %1$d notes</string>
+    <string name="library_export_failed">Export failed — %1$s</string>
 </resources>

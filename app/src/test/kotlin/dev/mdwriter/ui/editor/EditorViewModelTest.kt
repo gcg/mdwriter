@@ -1,7 +1,10 @@
 package dev.mdwriter.ui.editor
 
+import android.provider.DocumentsContract
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import androidx.lifecycle.SavedStateHandle
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
 import dev.mdwriter.data.document.AutosaveCoordinator
@@ -16,9 +19,15 @@ import dev.mdwriter.data.library.key
 import dev.mdwriter.data.settings.Position
 import dev.mdwriter.data.settings.PositionStore
 import dev.mdwriter.data.settings.SettingsRepository
+import dev.mdwriter.data.storage.ExternalDocStore
 import dev.mdwriter.data.storage.RecoveryStore
+import dev.mdwriter.data.storage.SafIo
+import dev.mdwriter.intents.IntentHandler
+import dev.mdwriter.intents.RoutedIntent
+import dev.mdwriter.intents.ShareOut
 import dev.mdwriter.testing.FakeDocumentStore
 import dev.mdwriter.testing.FakeEditorBinding
+import dev.mdwriter.testing.TestDocumentsProvider
 import dev.mdwriter.ui.preview.PreviewRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -39,12 +48,15 @@ import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
+import org.junit.runner.RunWith
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@RunWith(AndroidJUnit4::class)
 class EditorViewModelTest {
     @get:Rule
     val tmp = TemporaryFolder()
 
+    private val context = ApplicationProvider.getApplicationContext<android.app.Application>()
     private lateinit var testDispatcher: TestDispatcher
     private lateinit var store: FakeDocumentStore
     private lateinit var settingsRepo: SettingsRepository
@@ -55,6 +67,9 @@ class EditorViewModelTest {
     private lateinit var autosave: AutosaveCoordinator
     private lateinit var autoNamer: AutoNamer
     private lateinit var appScope: CoroutineScope
+    private lateinit var externalStore: ExternalDocStore
+    private lateinit var intentHandler: IntentHandler
+    private lateinit var shareOut: ShareOut
     private val dataStoreJobs = mutableListOf<Job>()
     private var settingsFileCounter = 0
     private var clock = 1_700_000_000_000L
@@ -86,9 +101,10 @@ class EditorViewModelTest {
                 clock = { clock },
             )
 
+        externalStore = ExternalDocStore(context, SafIo(context.contentResolver), settingsRepo, io = testDispatcher)
         // `io` defaults to a REAL Dispatchers.IO, which would let part of every save race the virtual clock.
         recovery = RecoveryStore(tmp.newFolder("recovery"), io = testDispatcher)
-        library = LibraryRepository(store, settingsRepo)
+        library = LibraryRepository(store, settingsRepo, externalStore = externalStore)
         // Shares `testDispatcher`'s scheduler with `autosave`/`viewModelScope` (Main) so that advanceTimeBy/
         // runCurrent() deterministically drive the WHOLE save chain — Dispatchers.Unconfined would let part of
         // it resume on a real thread past its first suspension point, racing the test's own assertions.
@@ -96,6 +112,8 @@ class EditorViewModelTest {
         appScope = CoroutineScope(Job())
         autosave = AutosaveCoordinator(appScope, testDispatcher)
         autoNamer = AutoNamer(library, documents, settingsRepo, positionsRepo)
+        intentHandler = IntentHandler(context, library, externalStore, settingsRepo)
+        shareOut = ShareOut(context, library, io = testDispatcher)
     }
 
     @After
@@ -122,6 +140,9 @@ class EditorViewModelTest {
             handle = handle,
             clock = clockMillis,
             previewRenderer = PreviewRenderer(testDispatcher),
+            intentHandler = intentHandler,
+            externalStore = externalStore,
+            shareOut = shareOut,
         )
 
     /** Keeps `vm.uiState`'s `WhileSubscribed(5_000)` sharing "hot" for the rest of the test, and returns a way to
@@ -449,5 +470,110 @@ class EditorViewModelTest {
             drainPast(1_001)
             assertThat(latestUi().save).isEqualTo(SaveState.Clean)
             assertThat(String(store.bytesOf(ref)!!)).isEqualTo("recovered content twelve")
+        }
+
+    // ---- T18 --------------------------------------------------------------------------------------------------
+
+    @Test
+    fun shareTextCreatesNoteOpensWithIme() =
+        runTest(testDispatcher) {
+            settingsRepo.update { it.copy(welcomeCreated = true) }
+            val vm = newVm()
+            vm.events.test {
+                vm.startWith(RoutedIntent.ShareText("Idea", "from adb"))
+                val install = awaitItem() as EditorEvent.Install
+                assertThat(install.request.text).isEqualTo("# Idea\n\nfrom adb\n")
+                val afterOpen = awaitItem() as EditorEvent.AfterOpen
+                assertThat(afterOpen.showIme).isTrue()
+                cancelAndIgnoreRemainingEvents()
+            }
+            assertThat(store.contains(DocRef.InternalFile("Idea.md"))).isTrue()
+        }
+
+    @Test
+    fun newIntentFlushesCurrentFirst() =
+        runTest(testDispatcher) {
+            settingsRepo.update { it.copy(welcomeCreated = true) }
+            store.write(DocRef.InternalFile("Existing.md"), "existing content".toByteArray())
+            val vm = newVm()
+            val binding = FakeEditorBinding()
+            vm.bindEditor(binding)
+
+            vm.events.test {
+                vm.start()
+                val install = awaitItem() as EditorEvent.Install
+                binding.install(install.request.text, install.request.selection, install.request.scrollY)
+                vm.onInstalled(binding.version)
+                awaitItem()
+                runCurrent()
+
+                // Dirty, but nowhere near the 1s idle autosave — only handle()'s own flush() should save it.
+                binding.edit(binding.snapshot().text + " unsaved")
+                vm.onEdit(binding.version)
+                runCurrent()
+
+                vm.handle(RoutedIntent.ShareText("Idea", "new note"))
+                val newInstall = awaitItem() as EditorEvent.Install
+                assertThat(newInstall.request.text).isEqualTo("# Idea\n\nnew note\n")
+                cancelAndIgnoreRemainingEvents()
+            }
+            runCurrent()
+            assertThat(String(store.bytesOf(DocRef.InternalFile("Existing.md"))!!)).contains("unsaved")
+        }
+
+    @Test
+    fun readOnlyExternalSaveCopyOpensLibraryCopy() =
+        runTest(testDispatcher) {
+            settingsRepo.update { it.copy(welcomeCreated = true) }
+            TestDocumentsProvider.flags = TestDocumentsProvider.DEFAULT_FLAGS
+            TestDocumentsProvider.throwSecurity = false
+            org.robolectric.Robolectric
+                .buildContentProvider(TestDocumentsProvider::class.java)
+                .create(
+                    android.content.pm.ProviderInfo().apply {
+                        authority = TestDocumentsProvider.AUTHORITY
+                        exported = true
+                        grantUriPermissions = true
+                        readPermission = android.Manifest.permission.MANAGE_DOCUMENTS
+                        writePermission = android.Manifest.permission.MANAGE_DOCUMENTS
+                    },
+                )
+            val resolver = context.contentResolver
+            val rootDocUri =
+                DocumentsContract.buildDocumentUri(TestDocumentsProvider.AUTHORITY, TestDocumentsProvider.ROOT_DOC_ID)
+            val uri =
+                requireNotNull(DocumentsContract.createDocument(resolver, rootDocUri, "text/markdown", "External.md"))
+            requireNotNull(resolver.openOutputStream(uri, "wt")).use { it.write("external content".toByteArray()) }
+
+            val ref = DocRef.External(uri.toString(), writable = false)
+            val vm = newVm()
+            val latestUi = trackUiState(vm)
+            val binding = FakeEditorBinding()
+            vm.bindEditor(binding)
+
+            vm.events.test {
+                vm.start(initial = ref, initialShowIme = false)
+                val install = awaitItem() as EditorEvent.Install
+                assertThat(install.request.text).isEqualTo("external content")
+                binding.install(install.request.text, install.request.selection, install.request.scrollY)
+                vm.onInstalled(binding.version)
+                awaitItem()
+                cancelAndIgnoreRemainingEvents()
+            }
+            runCurrent()
+            assertThat(latestUi().readOnly).isTrue()
+
+            vm.events.test {
+                vm.saveCopyToLibrary()
+                val install = awaitItem() as EditorEvent.Install
+                assertThat(install.request.text).isEqualTo("external content")
+                cancelAndIgnoreRemainingEvents()
+            }
+            runCurrent()
+
+            assertThat(store.contains(DocRef.InternalFile("External.md"))).isTrue()
+            assertThat(String(store.bytesOf(DocRef.InternalFile("External.md"))!!)).isEqualTo("external content")
+            assertThat(latestUi().doc).isEqualTo(DocRef.InternalFile("External.md"))
+            assertThat(latestUi().readOnly).isFalse()
         }
 }

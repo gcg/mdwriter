@@ -3,6 +3,8 @@ package dev.mdwriter.ui.library
 import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import dev.mdwriter.data.export.ExportAllNotes
+import dev.mdwriter.data.export.ExportStatus
 import dev.mdwriter.data.library.DocKey
 import dev.mdwriter.data.library.DocRef
 import dev.mdwriter.data.library.EntryCaps
@@ -23,6 +25,7 @@ import dev.mdwriter.data.settings.SortOrder
 import dev.mdwriter.data.storage.NoteFiles
 import dev.mdwriter.data.storage.StorageException
 import dev.mdwriter.data.storage.userMessage
+import dev.mdwriter.intents.ShareOut
 import dev.mdwriter.ui.editor.DocumentSession
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -85,6 +88,8 @@ class LibraryViewModel(
     private val session: DocumentSession,
     private val appScope: CoroutineScope,
     private val io: CoroutineDispatcher,
+    private val shareOut: ShareOut,
+    private val exporter: ExportAllNotes,
 ) : ViewModel() {
     private val crumbs = MutableStateFlow(listOf(Crumb(library.rootOf(LocationId.Internal), "")))
     private val pending = MutableStateFlow<PendingDelete?>(null)
@@ -157,6 +162,22 @@ class LibraryViewModel(
                 if (!stillReady) {
                     crumbs.value = listOf(Crumb(library.rootOf(LocationId.Internal), ""))
                     closeSearch()
+                }
+            }
+        }
+        // T18: "Export all notes…" (rememberExportAllNotes) reports Done/Failed through the drawer's own snackbar.
+        viewModelScope.launch {
+            exporter.status.collect { status ->
+                when (status) {
+                    is ExportStatus.Done -> {
+                        _events.send(LibraryEvent.Message("Exported ${status.summary.files} notes"))
+                    }
+
+                    is ExportStatus.Failed -> {
+                        _events.send(LibraryEvent.Message("Export failed — ${status.message}"))
+                    }
+
+                    else -> {}
                 }
             }
         }
@@ -375,6 +396,23 @@ class LibraryViewModel(
                 if (isOpen) session.onCurrentRefChanged(ref, newRef)
             }.onFailure { reportError(it) }
     }
+
+    // ---- T18: share out (rowMenuExtras) -----------------------------------------------------------------------------
+
+    /** Flushes first when [entry] is the currently-open document, then builds a share-out chooser intent and hands
+     * it back through [events] as [LibraryEvent.ShareIntent] — `MdWriterRoot`'s single collector actually starts it
+     * (01 §5, no ViewModel holds a Context). */
+    fun share(entry: LibraryEntry) =
+        viewModelScope.launch {
+            val ref = entry.doc ?: return@launch
+            try {
+                if (ref.key() == session.current.value?.key()) session.flush()
+                val intent = shareOut.intentFor(ref)
+                _events.send(LibraryEvent.ShareIntent(intent))
+            } catch (e: StorageException) {
+                _events.send(LibraryEvent.Message("Couldn't share: ${e.error.userMessage()}"))
+            }
+        }
 
     // ---- delete / undo --------------------------------------------------------------------------------------------
 

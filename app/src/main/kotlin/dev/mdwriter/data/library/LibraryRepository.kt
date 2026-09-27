@@ -65,6 +65,8 @@ class LibraryRepository(
     /** T14: null in tests that never touch a real grant (they can pre-seed [locations] via [seedLocationsForTest]
      * or simply never call [linkTree]/[revalidate]). */
     private val treeGrants: TreeGrants? = null,
+    /** T18: routes [DocRef.External]; null in tests that never open an external document. */
+    private val externalStore: DocumentStore? = null,
 ) {
     private val treeStores = ConcurrentHashMap<String, DocumentStore>()
     private val treeNames = ConcurrentHashMap<String, String>()
@@ -99,7 +101,7 @@ class LibraryRepository(
         when (ref) {
             is DocRef.InternalFile -> internalStore
             is DocRef.TreeDoc -> storeForTreeChecked(ref.treeUri)
-            is DocRef.External -> throw StorageException(StorageError.NotFound)
+            is DocRef.External -> externalStore ?: throw StorageException(StorageError.NotFound)
         }
 
     fun storeFor(location: LocationId): DocumentStore =

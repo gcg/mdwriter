@@ -8,16 +8,20 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.mdwriter.data.document.AutosaveCoordinator
 import dev.mdwriter.data.document.DocumentRepository
+import dev.mdwriter.data.export.ExportAllNotes
 import dev.mdwriter.data.library.AutoNamer
 import dev.mdwriter.data.library.LibraryRepository
 import dev.mdwriter.data.library.TreeGrants
 import dev.mdwriter.data.settings.PositionStore
 import dev.mdwriter.data.settings.SettingsRepository
+import dev.mdwriter.data.storage.ExternalDocStore
 import dev.mdwriter.data.storage.InternalStore
 import dev.mdwriter.data.storage.RecoveryStore
 import dev.mdwriter.data.storage.SafIo
 import dev.mdwriter.data.storage.SafTreeStore
 import dev.mdwriter.data.storage.TrashBin
+import dev.mdwriter.intents.IntentHandler
+import dev.mdwriter.intents.ShareOut
 import dev.mdwriter.util.AppDispatchers
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -63,6 +67,9 @@ class AppContainer(
     val safIo: SafIo = SafIo(app.contentResolver)
     val treeGrants: TreeGrants = TreeGrants(app.contentResolver)
 
+    // T18
+    val externalStore: ExternalDocStore = ExternalDocStore(app, safIo, settings, dispatchers.io)
+
     val library: LibraryRepository =
         LibraryRepository(
             internalStore = internalStore,
@@ -72,6 +79,7 @@ class AppContainer(
                 SafTreeStore(Uri.parse(treeUriString), app.contentResolver, safIo, trashBin, dispatchers.io)
             },
             treeGrants = treeGrants,
+            externalStore = externalStore,
         )
 
     val documents: DocumentRepository = DocumentRepository(library, recovery, dispatchers.io)
@@ -79,6 +87,12 @@ class AppContainer(
     val autosave: AutosaveCoordinator = AutosaveCoordinator(applicationScope, dispatchers.default)
 
     val autoNamer: AutoNamer = AutoNamer(library, documents, settings, positions)
+
+    // T18
+    val intentHandler: IntentHandler = IntentHandler(app, library, externalStore, settings)
+    val shareOut: ShareOut = ShareOut(app, library, dispatchers.io)
+    val exporter: ExportAllNotes =
+        ExportAllNotes(app, File(app.filesDir, "library"), applicationScope, dispatchers.io)
 
     init {
         // T10's own STATUS entry: "T11 must call internalStore.purgeTrash() on app start."

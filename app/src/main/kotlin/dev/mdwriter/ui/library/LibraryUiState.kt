@@ -1,5 +1,6 @@
 package dev.mdwriter.ui.library
 
+import android.content.Intent
 import dev.mdwriter.data.library.DocKey
 import dev.mdwriter.data.library.EntryCaps
 import dev.mdwriter.data.library.FolderRef
@@ -49,6 +50,12 @@ sealed interface LibraryEvent {
 
     data class Message(
         val text: String,
+    ) : LibraryEvent
+
+    /** T18: a share-out chooser intent for a library row's "Share" menu item — `MdWriterRoot`'s single collector of
+     * [LibraryViewModel.events] starts it (never built/started inside the ViewModel — 01 §5). */
+    data class ShareIntent(
+        val intent: Intent,
     ) : LibraryEvent
 }
 

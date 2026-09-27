@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- FileProvider paths (T18): ShareOut copies the shared file under cacheDir/exports/<uuid>/<name>. -->
+<paths>
+    <cache-path name="exports" path="exports/" />
+</paths>
