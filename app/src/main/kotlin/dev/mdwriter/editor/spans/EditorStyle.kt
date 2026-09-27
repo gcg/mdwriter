@@ -2,6 +2,7 @@ package dev.mdwriter.editor.spans
 
 import android.content.Context
 import androidx.compose.ui.graphics.toArgb
+import dev.mdwriter.editor.focusOverlayArgb
 import dev.mdwriter.ui.theme.EditorMetrics
 import dev.mdwriter.ui.theme.WidthClass
 import dev.mdwriter.ui.theme.WriterColors
@@ -56,6 +57,9 @@ class EditorStyle(
 
     /** 1 dp, set from density in [create]. */
     var underlinePx: Float = 1f
+
+    /** T15 (02 §2): the Focus Mode dim overlay colour, always derived live from [colors] — never stale. */
+    val focusOverlayColor: Int get() = focusOverlayArgb(colors.bg, colors.text, colors.focusDim)
 
     /** index = heading level (0 = body); 02 §3. */
     val headingScale: FloatArray = floatArrayOf(1f, 1.60f, 1.40f, 1.25f, 1.10f, 1.00f, 1.00f)

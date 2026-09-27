@@ -40,6 +40,7 @@ import dev.mdwriter.data.storage.StorageLimits
 import dev.mdwriter.data.storage.TextCodec
 import dev.mdwriter.data.storage.TextFormat
 import dev.mdwriter.data.storage.userMessage
+import dev.mdwriter.editor.FocusModeKind
 import dev.mdwriter.editor.InstallRequest
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -338,6 +339,25 @@ class EditorViewModel(
      * back-ordering contract (01 §6.4 / §H): `BackHandler(enabled = ui.findOpen) { editorVm.closeFind() }`. */
     fun closeFind() {
         uiInternal.update { it.copy(findOpen = false) }
+    }
+
+    // ---- T15: Focus Mode / typewriter / word count settings, and the stats pipeline's result -------------------
+
+    fun setFocusMode(mode: FocusModeKind) {
+        viewModelScope.launch { settings.update { it.copy(focusMode = mode) } }
+    }
+
+    fun setTypewriter(on: Boolean) {
+        viewModelScope.launch { settings.update { it.copy(typewriter = on) } }
+    }
+
+    fun setWordCount(on: Boolean) {
+        viewModelScope.launch { settings.update { it.copy(wordCount = on) } }
+    }
+
+    /** `null` when Word count is off, or [StatsPipeline] hasn't produced a result yet. */
+    fun onStats(d: DisplayStats?) {
+        uiInternal.update { it.copy(stats = d?.stats, statsSelection = d?.isSelection ?: false) }
     }
 
     /** Called by `MdWriterRoot` right before the drawer opens: flush, then auto-name the current doc (never

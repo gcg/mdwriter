@@ -2630,3 +2630,254 @@ defaults misclassified a gesture, so none were retuned.
 - `EditorViewModel.restartTreeWatch()`/`checkExternalNow()`/`isForeground` are the seam for "live external change
   while a `TreeDoc` is open" — a future task adding more per-document live-watching behaviour should extend this
   rather than adding a second, competing `onStart`/`onStop`-scoped collector.
+
+## T15 — Focus Mode, typewriter scrolling, stats line — DONE — 2026-09-27
+
+**Step 1 survey (before any code was written):**
+- `grep -rn "setPadding\|FocusModeKind\|typewriter\|onSelectionChanged\|onScrollChanged\|bringPointIntoView"
+  app/src/main/kotlin/dev/mdwriter/editor`: one `setPaddingRelative` call site
+  (`EditorScrollView.applyGeometry`, T05's own one call site); `FocusModeKind` already exists at
+  `editor/FocusModeKind.kt` (T11, `enum class FocusModeKind { Off, Sentence, Paragraph }` — not redeclared);
+  `typewriter` had zero hits (nothing built yet); `onScrollChanged` already overridden in `EditorScrollView`
+  (T13, emits `onScrolled` for `scrollChanges` — extended, not duplicated); `onSelectionChanged` already
+  overridden in `MarkdownEditText` (calls `mdUndo`/`selectionUi`, both nullable `var`s guarding the "TextView's
+  super constructor calls overridden methods before this class's own init runs" hazard — the same hazard T15's
+  own new focus-mode fields had to guard against, see Deviations); `bringPointIntoView` had one call site
+  (`EditorScrollView.onSizeChanged`'s IME-open branch, T05) — no existing override to conflict with.
+- `grep -rn "EditorStyle(" app/src/main`: exactly one constructor call site, `EditorStyle.create()`
+  (`editor/spans/EditorStyle.kt`) — the "builder that maps `WriterColors` to `EditorStyle`" the task's step 3
+  refers to.
+- `grep -n "focusMode\|typewriter\|wordCount" app/src/main/kotlin/dev/mdwriter/data/settings/*.kt`: all three
+  already fully wired end-to-end in `Settings.kt` (fields + defaults) and `SettingsRepository.kt`
+  (`Keys.FOCUS_MODE`/`TYPEWRITER`/`WORD_COUNT`, `toSettings()`/`writeAll()`) — an earlier task (T11) added these
+  ahead of schedule; T15 only had to read/write them, never touch the repository itself.
+
+**What changed:**
+- `editor/FocusMode.kt` (new): `SentenceBreaker` fun interface, `IcuSentenceBreaker` (real, `android.icu`-based,
+  app-only), `FocusRange`, `FocusRanges` (pure `paragraphStart`/`paragraphEnd`/`compute`/`sentenceStart`/
+  `sentenceEnd`, copied verbatim from Reference §A), `focusOverlayArgb()`, and `FocusOverlay` — **rewritten from
+  the task's own Reference §B sketch** to draw the dim band as plain fill rectangles instead of a single big
+  rect clipped by `Canvas.clipOutPath` (see Deviations: the clip silently had no effect under hardware-accelerated
+  rendering on a real device).
+- `editor/spans/EditorStyle.kt`: added `val focusOverlayColor: Int` (computed live from `colors`, never stale).
+- `editor/MarkdownEditText.kt`: `focusMode`/`typewriter` properties, the overlay draw in `onDraw`, `onTextChanged`
+  override (marks `focusStale`), the `onSelectionChanged` refresh (guarded — see Deviations), `onViewportChanged()`,
+  the `bringPointIntoView(offset, requestRectWithoutFocus)` override (typewriter re-centre via
+  `EditorScrollView.animateScrollTo`, never `super` when typewriter is on), and the `applyColors` overlay-colour
+  wiring. `focusOverlay`/`sentenceBreaker` are `lateinit var`s assigned at the end of `init`, guarded in
+  `onSelectionChanged` via `::sentenceBreaker.isInitialized` (see Deviations).
+- `editor/EditorScrollView.kt`: `childViewport(out)`, `viewportHeight()`, `maxScrollY()`, `isUserScrolling`
+  (`dragging || settling`, tracked via a `dispatchTouchEvent` override + a `fling()` override that sets
+  `settling`), `cancelTypewriter()`, `animateScrollTo(y)` (150 ms `ValueAnimator` + `DecelerateInterpolator`,
+  jumps straight there if `!ValueAnimator.areAnimatorsEnabled()`), `internal object TypewriterMath` (file-level,
+  copied verbatim from Reference §C). `onScrollChanged` extended (not duplicated) to call
+  `editText.onViewportChanged()` and re-post the 100 ms settle check. `applyGeometry()` gained the typewriter
+  padding branch (45 %/55 % of window height replaces the geometry-derived top/bottom padding when
+  `editText.typewriter` is true) — still the same one `setPaddingRelative` call site (Acceptance 5).
+- `editor/EditorController.kt`: `focusMode`/`typewriter` properties delegating straight to the EditText;
+  `StatsInput(text, spans, selStart, selEnd, version)` + `statsInput()` (main-thread snapshot,
+  `highlighter?.spans()?.toList()` — a defensive copy per 01 §6.1).
+- `ui/editor/StatsPipeline.kt` (new): `StatsSource`, `DisplayStats`, `StatsDisplay` (`Words/Characters/Sentences/
+  ReadingTime`, `.next()`), `StatsPipeline` (400 ms debounce via `collectLatest`, version-cached document result,
+  always-recompute for a selection, drops a result whose version went stale during compute), `formatStats()`.
+- `ui/editor/EditorChrome.kt`: added `StatsLine` composable (centre slot of the glyph row, `testTag("statsLine")`,
+  `Modifier.clickable(role = Role.Button)`, 48 dp min height, `animateFloatAsState` 0.6f/1f over 150 ms, gained
+  a `modifier` parameter to satisfy `compose:modifier-missing-check`).
+- `ui/editor/OverflowMenu.kt`: **fixed a real behavioural gap against this task's own step 9** — T13 had already
+  built the Focus radio rows and the Typewriter/Word count switch rows (inline, not a sub-page — see Deviations),
+  but wired ALL of them (including Typewriter/Word count) through the same `act { … }` helper that always calls
+  `onDismiss()` first. Per step 9 ("clicking [Typewriter/Word count] … does not dismiss"), removed `act` from
+  those two rows' `onClick` only (Focus radio rows keep dismissing, matching 02 §9/step 9 exactly). Also added
+  `Modifier.semantics { toggleableState = … }` to those two `DropdownMenuItem`s so `assertIsOn()`/`assertIsOff()`
+  can read the state directly (Material3's `Switch(onCheckedChange = null)` does not expose `ToggleableState`
+  through the merged semantics tree on its own — found via a failing `OverflowFocusMenuTest`).
+- `ui/editor/EditorScreen.kt`: new `settings: Settings` parameter; pushes `controller.focusMode`/`.typewriter`
+  from it in two `LaunchedEffect`s; runs the stats pipeline (`LaunchedEffect(controller, settings.wordCount)`,
+  a local anonymous `StatsSource` adapting the controller exactly per Reference §D, `vm.onStats(null)` when
+  Word count is off); wires `OverflowActions.focus`/`.typewriter`/`.wordCount` and the `EditorChrome` `stats` slot
+  (a local `rememberSaveable { StatsDisplay.Words }`).
+- `ui/editor/EditorViewModel.kt`: `setFocusMode`/`setTypewriter`/`setWordCount` (persist via
+  `settings.update { it.copy(...) }`), `onStats(d: DisplayStats?)` (`uiState.stats`/`.statsSelection`).
+  `EditorUiState.statsSelection` already existed (an earlier task's forward-compat field) — confirmed, not
+  re-added.
+- `ui/root/MdWriterRoot.kt`: threads `settings` into `EditorScreen(...)` (one new argument).
+- `res/values/strings.xml`: added `focus_off`/`focus_sentence`/`focus_paragraph`/`change_statistic`. Reused
+  T13's existing `overflow_focus`/`overflow_typewriter`/`overflow_word_count` rather than adding the task's
+  suggested `focus_mode`/`typewriter_scrolling`/`word_count` names, which would have duplicated them — see
+  Deviations.
+- Tests (all new): `U/editor/FocusRangesTest=13`, `U/editor/FocusOverlayColorTest=4`,
+  `U/editor/TypewriterMathTest=4`, `U/ui/editor/StatsPipelineTest=5`, `U/ui/editor/StatsFormatTest=6`,
+  `U/ui/editor/StatsLineTest=3` (Robolectric+Compose), `U/ui/editor/OverflowFocusMenuTest=3`
+  (Robolectric+Compose) = **38 new JVM tests**; `I/editor/FocusOverlayDeviceTest=5` (3 from the task's own spec
+  + 2 added while root-causing the clip bug: a wrapped-single-paragraph case and a scrolled-wrapped-paragraph
+  case, both reusing the exact "mdwriter is a quiet place…" welcome-note sentence), `I/editor/TypewriterDeviceTest=1`
+  = **6 new instrumented tests**. All reuse the `EditorPerfActivity` debug-only harness (T07) via
+  `ActivityScenario`, exactly like `EditorScrollDeviceTest`/`InstallStylingDeviceTest` already did — not a new
+  harness, and not the `createAndroidComposeRule` pattern the task's own step 10 grep suggested (that pattern is
+  only used by `SwipeNavTest`, which needs a real `MainActivity`; `EditorPerfActivity` is simpler and already
+  proven for exactly this "install an exact document, drive `EditorController` directly" use case).
+
+**Verification:**
+- `make test`: JVM total **632 tests, 0 failures** (`:app` + `:core:markdown`), including all 7 new classes above
+  with the exact cases from the task's own tables (`FocusRangesTest`'s 13 cases include every row of the
+  Sentence/Paragraph/Off table plus the 25,000-char scan-clamp case; `StatsFormatTest`'s 6 include the exact
+  `"don't stop e-mail 3.14 1,000 snake_case"` → `"6 words · 1 min"` → `"39 characters"` → `"1 sentence"` sequence
+  and `"Two sentences. Here! Right?"` → `"3 sentences"`; `StatsPipelineTest`'s 5 include the 400 ms debounce
+  boundary, three-triggers-one-emission via `collectLatest`, the version-bump-during-compute drop, and the
+  collapsed-caret-same-version `snapshotCalls` count).
+- `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key`: **BUILD SUCCESSFUL** (105 tasks: spotless, full JVM suite,
+  Android Lint, release R8 build). Lint SARIF: **0 errors**, 36 warnings (up from 31 pre-T15 — new
+  `UnusedResources`-class notices for a couple of the new strings, no new error-level findings). One Kotlin
+  compiler warning accepted deliberately: `'lateinit' is unnecessary: definitely initialized in constructors` on
+  `focusOverlay`/`sentenceBreaker` — the compiler's straight-line definite-assignment analysis cannot see the
+  real hazard (TextView's super constructor invoking `onSelectionChanged` before this class's own property
+  initializers run — the exact same hazard `mdUndo`/`smartInput`/`commands`/`selectionUi` already guard against
+  with nullable `var`s); `lateinit` + `::sentenceBreaker.isInitialized` is the correct guard here specifically
+  because it is a real reflection-backed check, not a coincidence of a zero-value default.
+- Acceptance 5: `grep -rn "setPadding" app/src/main/kotlin/dev/mdwriter/editor` → exactly one call
+  (`EditorScrollView.applyGeometry`'s `setPaddingRelative`, T05's own site with T15's typewriter branch added
+  inside it) — no new call site.
+- `make test-device DEVICE=emulator-5554`: **57/57 green** (51 pre-T15 + 6 new). Two unrelated pre-existing
+  flakes were hit and confirmed non-regressions along the way (see Known issues): `InstallStylingDeviceTest`
+  (T06) failed once when run immediately after the two new CPU-heavy Focus Mode tests, passed 1/1 in isolation;
+  `SelectionToolbarTest.programmaticSelectionShowsAfter150ms` (T09) failed once on a later full run, both exactly
+  matching T13's own documented "flaky under device load when run right after CPU-heavy tests" finding for this
+  same emulator — a clean run reproduces 57/57 every time.
+  - `FocusOverlayDeviceTest` (5/5): `sentenceModeLightPaletteDimsOutsideActiveSentence` — "One" darkest pixel in
+    `0xB4..0xCC`, "Two" darkest `≤0x40`, "Three" darkest in `0xB4..0xCC`; `sentenceModeDarkPaletteDimsOutsideActiveSentence`
+    — "One" brightest in `0x52..0x6A`, "Two" brightest `≥0xB8`; `paragraphModeDimsOtherLinesOnly` — "a" (line 1)
+    dimmed, "bb" (the caret's own line 2) undimmed; `sentenceModeWrappedParagraphLightsOnlyTheActiveSentence` and
+    `sentenceModeStillCorrectWhenScrolled` (both added while root-causing the clip bug, see Deviations) — the
+    first sentence of a wrapped, multi-line paragraph lights while a later sentence in the SAME paragraph
+    (wrapped to a different visual line) stays dimmed, with and without the ScrollView scrolled.
+  - `TypewriterDeviceTest` (1/1): 30 scripted `commitText` calls at the document end, each followed by
+    `waitForIdleSync()` + 200 ms; every one of the 30 kept `|centre − 0.45·viewportH| ≤ 1 line pitch`.
+- Manual emulator verification (`emulator-5554`, real `MainActivity`/`MdWriterRoot`, welcome note):
+  - **Screenshots** (all described here, none committed per README rule 9): `t15-sentence-light.png` — caret
+    placed inside "Swipe left to preview." (the second sentence of a two-sentence paragraph); that sentence is
+    full black, its own paragraph's first sentence ("Swipe right for your notes.") is dimmed grey, and every
+    other paragraph/heading/list in the document is dimmed — confirms Sentence mode picks exactly one sentence,
+    not the whole paragraph. `t15-sentence-dark.png` — same caret position, dark palette: the active sentence is
+    light grey/white, the caret itself is visible (accent-blue vertical bar) and clearly undimmed, everything
+    else is a darker grey. `t15-paragraph-light.png`/`t15-paragraph-dark.png` — same caret position, Paragraph
+    mode: **both** sentences of "Swipe right for your notes. Swipe left to preview." are lit, confirming
+    Paragraph mode lights the whole paragraph rather than one sentence. A fifth screenshot (fling scroll to the
+    end of the document, Sentence mode still on with the caret's paragraph now scrolled off-screen) showed
+    continuous, hole-free dimming from the top of the viewport to the bottom — no undimmed band anywhere.
+  - **Typewriter**: `t15-typewriter.png` — after the 30-line `adb input text`/`keyevent 66` script (Verification
+    commands, run against the real app with Typewriter scrolling turned on via the overflow menu), the caret's
+    line sits at roughly 48 % of the visible (non-IME) viewport height — matching the `TypewriterDeviceTest`'s
+    quantitative ±1-line-pitch result. IME show/hide during the whole sequence never changed the EditText's
+    measured padding (confirmed by `grep`, Acceptance 5, and by the geometry code path itself: the typewriter
+    padding branch only runs from `applyGeometry()`, never from `onSizeChanged`).
+  - **Stats line** (word count on, live welcome-note content — not the task's literal "Two sentences. Here!
+    Right?" sample, which is instead exercised precisely by `StatsFormatTest`/`StatsLineTest`): showed
+    `"172 words · 1 min"`; tapping cycled to `"662 characters"`, then `"11 sentences"`, then `"1 min read"`, then
+    back to words — all four states confirmed via cropped screenshots.
+  - **Overflow menu semantics** (via `adb shell uiautomator dump`, sidestepping ambiguous manual tap timing):
+    tapping "Typewriter scrolling" flips its row to `checked="true"` while the `DropdownMenu`'s other rows
+    (`Word count`, the Focus radio rows) remain present in the same dump — i.e. the menu stayed open, matching
+    the `act`-removal fix above; a second tap on "Word count" likewise flips it to `checked="true"` with the
+    menu still open.
+  - **Acceptance 7 (settings persistence)**: with Focus=Off, Typewriter=on, Word count=on all set, `am force-stop`
+    + relaunch showed the exact same three states read back from DataStore (Off radio selected, both switches
+    on, stats line showing live word count) with no user interaction needed to restore them.
+
+**Deviations from the plan:**
+- **Real, on-device-only rendering bug found and fixed: `FocusOverlay` no longer uses `Canvas.clipOutPath`.**
+  The task's own Reference §B sketch clips a single big dim rect by the (possibly concave, multi-line)
+  `Layout.getSelectionPath()` path. This worked in every JVM/Robolectric test and in a first pass of
+  instrumented tests — because both draw into a manually-created `Bitmap`/`Canvas(bitmap)`, i.e. Skia's software
+  rasterizer, where `clipOutPath` behaves as documented. On the real, hardware-accelerated on-screen canvas the
+  same clip call silently had **no effect at all**: the whole dim band painted over everything, including the
+  text that should have stayed lit. Root-caused via `adb logcat` debug logging of the path's `computeBounds()`
+  and `Canvas.isHardwareAccelerated` (confirmed `true`, non-empty, correctly-bounded path — logic was right, the
+  clip simply wasn't honoured) and independently by trying `View.setLayerType(LAYER_TYPE_SOFTWARE, null)` as a
+  probe (this "fixed" the symptom but broke unrelated rendering badly enough to confirm the software/hardware
+  canvas distinction was the real variable, not pursued as the actual fix). **Fix:** `FocusOverlay.draw` now
+  computes, per visible line, the lit x-range(s) (from the focus range and/or the caret) and draws the
+  DIMMED **complement** as plain `Canvas.drawRect` calls — no `Path`, no clip, so there is no software/hardware
+  discrepancy to hit. Verified by 5 device tests (2 of them new, specifically covering the wrapped-multi-line-
+  paragraph case this bug needed) and by the manual screenshots above. Not a hard-rule violation (still purely
+  a draw-time overlay, still no spans) and not a change to any public API — `FocusOverlay` stays `internal`.
+- **`MarkdownEditText.focusOverlay`/`.sentenceBreaker` are `lateinit var`, assigned at the end of `init`, not
+  inline field initializers**, guarded in `onSelectionChanged`'s new focus-refresh call via
+  `::sentenceBreaker.isInitialized`. Root cause: `TextView`'s own super constructor calls `onSelectionChanged`
+  (and `onTextChanged`) before ANY of this subclass's own property initializers run — the exact hazard the
+  class's pre-existing `mdUndo`/`smartInput`/`commands`/`selectionUi` nullable `var`s already document and guard
+  against. Not caught by `make check` (Robolectric never constructs a `MarkdownEditText` through a real
+  `Context`'s View inflation path the same way); would have been a `NullPointerException`-on-first-launch bug
+  identical in shape to T09's own documented `a11yIds` incident. `onTextChanged`'s own `focusStale = true` is
+  deliberately left unguarded: it is harmless before construction completes (a `Boolean` field's JVM zero-value
+  IS the desired "not ready" state, and the field's own subsequent initializer resets it to `false` anyway).
+- **`OverflowMenu.kt`'s Typewriter/Word count rows no longer call `act { … }` (i.e. no longer dismiss the menu on
+  click)** — a real, if narrow, gap against this task's own step 9 in code T13 had already shipped (T13 built the
+  Focus radio sub-rows and the two switch rows inline, ahead of T15, but wired every row through the same
+  dismiss-then-run helper). Fixed by removing `act` from exactly those two `onClick` lambdas; the Focus radio
+  rows are unchanged (they still dismiss, per 02 §9 / step 9's own text). Caught by writing
+  `OverflowFocusMenuTest.clickingWordCountTogglesAndDoesNotDismiss` before touching the menu file, then
+  confirmed against the real `DropdownMenu` state via `uiautomator dump` on-device (Manual verification above).
+- **`OverflowMenu.kt`'s Typewriter/Word count `DropdownMenuItem`s gained
+  `Modifier.semantics { toggleableState = … }`.** Material3's `Switch(onCheckedChange = null)` does not expose
+  a `ToggleableState` through the merged semantics tree on its own (confirmed by a failing
+  `assertIsOn()`/`Failed to assert … ToggleableState = 'On'`) — the explicit `semantics {}` on the row itself is
+  the fix, and it does not change any visible behaviour.
+- **The Focus sub-menu is NOT a `MenuPage`/back-row sub-page** (contrary to the task's own Reference §E sketch).
+  T13 had already shipped the Focus radio rows as three always-visible rows directly under a static, disabled
+  "Focus" header row inside the one `DropdownMenu` (matching 02 §9's own wireframe more literally: "Focus ▸ (Off
+  / Sentence / Paragraph)" read as one flat list, not two pages). T15's own step 9 says "Match T13's actual
+  `DropdownMenu` parameters" — kept T13's shape as-is rather than introducing a second, competing navigation
+  model; `OverflowFocusMenuTest` covers the actual (flat) structure.
+- **Reused T13's existing `overflow_focus`/`overflow_typewriter`/`overflow_word_count` string resources instead
+  of adding the task's suggested `focus_mode`/`typewriter_scrolling`/`word_count` names** (which would have been
+  exact duplicates of an existing string with a different name) — only added the genuinely-missing
+  `focus_off`/`focus_sentence`/`focus_paragraph`/`change_statistic`.
+- **Pure-black Focus Mode overlay alpha is 0.63 by the formula.** `02-design-spec.md` §2 already states this
+  exactly (`"black ≈ 0.63 (the formula wins, tokens #4A4A4A/#C8C8C8/#000000)"`) — this task's own Pitfalls section
+  says the design doc states "≈0.61", but the copy actually on disk already carries the corrected 0.63 value and
+  the "the formula wins" callout, so no further edit to `02-design-spec.md` was needed. `FocusOverlayColorTest`
+  asserts the exact ARGB (`0xA1000000`) this produces. `01-architecture.md` §3/§6.2/§6.4 already fully documented
+  `StatsPipeline.kt`, `StatsInput`/`statsInput()`, and `statsSelection` from planning (confirmed against the
+  shipped signatures — no edit needed, matching README rule 2's own "already applied during planning" caveat).
+- No library/plugin versions bumped, no new dependencies added.
+
+**Ktlint suppressions (file / rule / reason):** none added by this task.
+
+**Known issues / follow-ups:**
+- `make test-device`'s two pre-existing flaky tests under back-to-back device load
+  (`InstallStylingDeviceTest`, `SelectionToolbarTest.programmaticSelectionShowsAfter150ms`) are unchanged from
+  T13's own documented finding — not caused or worsened by this task, and a clean run is reliably 57/57.
+- The manual on-device repro process for the Focus Mode screenshots surfaced a real, pre-existing Android
+  platform quirk unrelated to Focus Mode itself: opening the overflow `DropdownMenu` (a focusable Popup) and then
+  dismissing it causes the EditText to regain **View** focus, and `android.widget.Editor.onFocusChanged`'s own
+  platform code then resets the selection to the end of the document (confirmed via a full `Throwable()` stack
+  trace through `Editor.onFocusChanged → Selection.setSelection`). This is not new in T15 and not fixed by it —
+  any future task relying on "the caret stays where it was" across an overflow-menu interaction should place the
+  caret (or re-place it) AFTER the menu closes, not before.
+- `SpannableStringBuilder`'s span-shift bookkeeping was not touched by this task, but the manual verification
+  session's own scripted typing/undo experiments corrupted the debug app's local Welcome note (harmless scratch
+  content); the emulator's app data was cleared (`pm clear dev.mdwriter.debug`) before finishing, restoring a
+  fresh Welcome note.
+
+**Notes for the next task:**
+- `FocusOverlay` (internal, `editor/FocusMode.kt`) is the reference implementation for "dim everything except a
+  computed range" via plain rectangles — any future task needing a similar draw-time highlight/dim effect over
+  wrapped, multi-line text should reuse this rectangle-gap technique (`drawDimmedGaps`) rather than
+  `Path`/`clipOutPath`, given the confirmed hardware-canvas caveat above.
+- `EditorController.focusMode`/`.typewriter` are plain delegating `var`s to the EditText — T19's Settings sheet
+  (if it ever needs a *direct* live-preview control, rather than going through `Settings`/DataStore) can set them
+  the same way `EditorScreen`'s `LaunchedEffect`s do.
+- `StatsSource`/`StatsPipeline`/`formatStats` (`ui/editor/StatsPipeline.kt`) are the whole stats contract; a
+  future task adding another stats display mode should extend `StatsDisplay`'s enum (its `.next()` cycles
+  automatically) and add one branch to `formatStats`, not build a parallel pipeline.
+- T17 (Find) should hide the stats line while Find is open the same way `EditorChrome`'s `stats` slot is already
+  wired (pass `stats = {}` or gate `uiState.stats` upstream) — not a new mechanism.
+- T19 (Settings sheet) reads/writes the exact same `Settings.focusMode`/`.typewriter`/`.wordCount` fields this
+  task uses — no new repository methods needed, and `EditorViewModel.setFocusMode`/`setTypewriter`/`setWordCount`
+  are reusable directly from a Settings row's `onClick`, not just the overflow menu.
+- The emulator (`emulator-5554`, Android 17/API 37) was left in compact/phone mode (`wm size reset`/`wm density
+  reset` both run), light mode (`cmd uimode night no`), with `dev.mdwriter.debug`'s app data freshly cleared
+  (`pm clear`) so the next task gets an untouched Welcome note on first launch. No release build installed;
+  `~/.config/mdwriter/` never touched; `/tmp/mdwriter-agent-key/` still holds the shared throwaway signing key.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
