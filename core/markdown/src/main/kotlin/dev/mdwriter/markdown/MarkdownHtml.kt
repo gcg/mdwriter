@@ -9,6 +9,8 @@ import org.commonmark.ext.gfm.strikethrough.StrikethroughExtension
 import org.commonmark.ext.gfm.tables.TablesExtension
 import org.commonmark.ext.heading.anchor.HeadingAnchorExtension
 import org.commonmark.ext.task.list.items.TaskListItemsExtension
+import org.commonmark.node.AbstractVisitor
+import org.commonmark.node.Heading
 import org.commonmark.parser.Parser
 import org.commonmark.renderer.html.HtmlRenderer
 
@@ -41,6 +43,25 @@ public class MarkdownHtml(
 
     /** HTML body fragment for [markdown] (front matter is dropped). */
     public fun renderBody(markdown: String): String = renderer.render(parser.parse(markdown))
+
+    /**
+     * Number of headings (ATX `#`/setext `===`/`---`) [markdown] parses to, using the SAME parser/extensions as
+     * [renderPage] (so front matter and fenced code are excluded exactly as they are from the rendered page). T16
+     * uses this to find which heading the caret is under (by counting headings in the text up to the caret's
+     * line) and jump the preview there.
+     */
+    public fun headingCount(markdown: String): Int {
+        var count = 0
+        parser.parse(markdown).accept(
+            object : AbstractVisitor() {
+                override fun visit(heading: Heading) {
+                    count++
+                    visitChildren(heading)
+                }
+            },
+        )
+        return count
+    }
 
     /**
      * Full page for WebView.loadDataWithBaseURL("https://appassets.androidplatform.net/doc/", page, "text/html", "utf-8", null).

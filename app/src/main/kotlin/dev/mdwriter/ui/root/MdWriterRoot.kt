@@ -1,5 +1,6 @@
 package dev.mdwriter.ui.root
 
+import android.util.TypedValue
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -24,12 +25,14 @@ import androidx.compose.material3.VerticalDivider
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfoV2
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -62,7 +65,12 @@ import dev.mdwriter.ui.library.LibraryEvent
 import dev.mdwriter.ui.library.LibraryPane
 import dev.mdwriter.ui.library.LibraryUiState
 import dev.mdwriter.ui.library.LibraryViewModel
+import dev.mdwriter.ui.preview.PreviewOverlay
+import dev.mdwriter.ui.preview.PreviewThemes
+import dev.mdwriter.ui.preview.PreviewWebViewHolder
+import dev.mdwriter.ui.theme.EditorMetrics
 import dev.mdwriter.ui.theme.MdWriterTheme
+import dev.mdwriter.ui.theme.WidthClass
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
 import dev.mdwriter.ui.theme.hairline
@@ -70,6 +78,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
+import java.io.File
 
 /**
  * Root composable (T11 + T12 + T13, 01 §6.4): the app theme driven live from
@@ -121,13 +130,78 @@ fun MdWriterRoot(
         val expanded = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
         var paneVisible by rememberSaveable { mutableStateOf(true) }
 
-        // ---- swipe navigation + preview stub (§G, out of scope: T16 replaces both) -------------------------------
-        val onOpenPreview: () -> Unit = {}
-        val previewAvailable = false
+        // ---- T16: the preview WebView (lazy, Activity context, never a ViewModel field — 01 §5) -----------------
+        val libraryRoot = remember(context) { File(context.filesDir, "library") }
+        val previewHolder = remember(context, libraryRoot) { PreviewWebViewHolder(context, libraryRoot) }
+        DisposableEffect(Unit) { onDispose { previewHolder.destroy() } }
+
+        // Same tokens the editor itself uses (WriterColors/WriterFont/EditorMetrics) — the preview matches it.
+        // controller.style.widthClass is a plain var (not Compose state), same read pattern EditorScreen already
+        // uses for EditorChrome; fontScale is the one dependency that needs an explicit key (Resources'
+        // displayMetrics update in place on a density/font-scale config change, which Compose does not otherwise
+        // observe — 01 §8 keeps this Activity alive across that change via configChanges).
+        val fontScale = LocalConfiguration.current.fontScale
+        val widthClass = controller.style.widthClass
+        val previewTheme =
+            remember(colors, settings.typeface, settings.textSizeStep, settings.lineLength, widthClass, fontScale) {
+                val dm = context.resources.displayMetrics
+                val bodySizeSp = EditorMetrics.bodyTextSizeSp(settings.textSizeStep, widthClass)
+                val bodyCssPx =
+                    TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, bodySizeSp.toFloat(), dm) / dm.density
+                PreviewThemes.build(
+                    colors = colors,
+                    pureBlack = settings.pureBlack,
+                    font = settings.typeface,
+                    bodyCssPx = bodyCssPx,
+                    measureChars = if (widthClass == WidthClass.Compact) null else settings.lineLength,
+                    sideDp = EditorMetrics.sideMarginMin(widthClass).value,
+                    topDp = EditorMetrics.topRoom(widthClass).value,
+                    density = dm.density,
+                )
+            }
+        // A theme change (settings, rotation, font scale) while the preview is open re-renders it in place; while
+        // closed, the next openPreview() call already picks up the fresh previewTheme.
+        LaunchedEffect(previewTheme) {
+            if (editorVm.uiState.value.previewOpen) {
+                editorVm.openPreview(
+                    controller.snapshot(),
+                    controller.caret(),
+                    previewTheme,
+                    editorVm.uiState.value.title,
+                )
+            }
+        }
+
+        // openPreview()/closePreview() are called through several layers that are only ever composed ONCE per
+        // MdWriterRoot lifetime (the commands LaunchedEffect keyed on the stable `commands` flow; the
+        // movableContentOf-wrapped `editor` below) — a plain `previewTheme` read inside their bodies would forever
+        // see the FIRST composition's theme (e.g. never pick up a later dark-mode toggle). rememberUpdatedState
+        // keeps the read live regardless of which composition's closure performs it (same reason EditorSurface's
+        // pointerInput lambdas use it, T13).
+        val currentPreviewTheme by rememberUpdatedState(previewTheme)
+
+        val previewAvailable = true
+
+        fun closePreview() {
+            editorVm.closePreview()
+        }
+
+        fun openPreview() {
+            controller.collapseSelection()
+            controller.hideIme()
+            if (!expanded) scope.launch { drawerState.close() }
+            editorVm.closeFind()
+            editorVm.openPreview(
+                controller.snapshot(),
+                controller.caret(),
+                currentPreviewTheme,
+                editorVm.uiState.value.title,
+            )
+        }
 
         fun openLibrary() {
             controller.collapseSelection()
-            // T16/T17 close the preview/find here first, if they are open; both are always closed in T13.
+            if (editorVm.uiState.value.previewOpen) closePreview() // T17 closes find here too, once it exists.
             if (expanded) paneVisible = true else scope.launch { drawerState.open() }
         }
 
@@ -144,7 +218,7 @@ fun MdWriterRoot(
         fun routeSwipe(dir: SwipeDir) {
             when (dir) {
                 TowardEnd -> openLibrary()
-                TowardStart -> if (expanded && paneVisible) paneVisible = false else onOpenPreview()
+                TowardStart -> if (expanded && paneVisible) paneVisible = false else openPreview()
             }
         }
 
@@ -164,6 +238,7 @@ fun MdWriterRoot(
                 when (cmd) {
                     AppCommand.NewNote -> libraryVm.newNote()
                     AppCommand.ToggleLibrary -> toggleLibrary()
+                    AppCommand.Preview -> if (editorVm.uiState.value.previewOpen) closePreview() else openPreview()
                 }
             }
         }
@@ -235,6 +310,7 @@ fun MdWriterRoot(
                         onOpenLibrary = ::toggleLibrary,
                         libraryIcon = libraryIcon,
                         onNewNote = libraryVm::newNote,
+                        onPreview = ::openPreview,
                         swipeEnabled = ::swipeEnabled,
                         swipeAccepts = ::swipeAccepts,
                         onSwipeArmedDown = {
@@ -310,6 +386,20 @@ fun MdWriterRoot(
         // enabled together -> selection last.
         val ui by editorVm.uiState.collectAsStateWithLifecycle()
         val selection by controller.selection.collectAsStateWithLifecycle()
+
+        // T16's PreviewSlot(): the preview overlay, composed here (after the drawer/pane inside Scaffold, before
+        // the root's own find/selection BackHandlers below — see the priority note above).
+        val previewPage by editorVm.preview.collectAsStateWithLifecycle()
+        val currentDoc by editorVm.current.collectAsStateWithLifecycle()
+        PreviewOverlay(
+            open = ui.previewOpen,
+            page = previewPage,
+            holder = previewHolder,
+            currentDoc = currentDoc,
+            onClose = ::closePreview,
+            onShare = null, // T18 supplies this
+        )
+
         BackHandler(enabled = ui.findOpen) { editorVm.closeFind() }
         BackHandler(enabled = selection.start != selection.end) { controller.collapseSelection() }
     }

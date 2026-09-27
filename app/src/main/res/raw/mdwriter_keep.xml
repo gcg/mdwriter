@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  T16: the release build's resource shrinker (AGP >= 9.3's "optimization { enable = true }", app/build.gradle.kts)
+  would otherwise drop the 12 bundled TTFs in res/font/ as "unused" — nothing in app code references
+  R.font.duo_regular etc. by a literal resource ID the shrinker can see; PreviewWebView's
+  WebViewAssetLoader.ResourcesPathHandler resolves them by NAME at runtime (Resources.getIdentifier), which the
+  shrinker's static analysis cannot follow. Keep them all.
+-->
+<resources xmlns:tools="http://schemas.android.com/tools" tools:keep="@font/*" />

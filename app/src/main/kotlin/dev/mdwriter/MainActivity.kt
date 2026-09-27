@@ -61,6 +61,11 @@ class MainActivity : ComponentActivity() {
                         KeyEvent.KEYCODE_L,
                         KeyEvent.META_CTRL_ON,
                     ),
+                    KeyboardShortcutInfo(
+                        getString(R.string.shortcut_preview),
+                        KeyEvent.KEYCODE_R,
+                        KeyEvent.META_CTRL_ON,
+                    ),
                 ),
             ),
         )
