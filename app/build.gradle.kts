@@ -201,4 +201,7 @@ dependencies {
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.espresso.core)
     androidTestImplementation(libs.truth)
+    // T16 PreviewSmokeTest (Acceptance 5f): finds/taps a rendered WebView link by its on-screen accessibility
+    // text — JS is off in the preview WebView, so there is no evaluateJavascript()-based way to do this.
+    androidTestImplementation(libs.androidx.test.uiautomator)
 }

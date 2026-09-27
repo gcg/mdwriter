@@ -19,6 +19,7 @@ import dev.mdwriter.data.settings.SettingsRepository
 import dev.mdwriter.data.storage.RecoveryStore
 import dev.mdwriter.testing.FakeDocumentStore
 import dev.mdwriter.testing.FakeEditorBinding
+import dev.mdwriter.ui.preview.PreviewRenderer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -120,6 +121,7 @@ class EditorViewModelTest {
             main = testDispatcher,
             handle = handle,
             clock = clockMillis,
+            previewRenderer = PreviewRenderer(testDispatcher),
         )
 
     /** Keeps `vm.uiState`'s `WhileSubscribed(5_000)` sharing "hot" for the rest of the test, and returns a way to

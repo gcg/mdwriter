@@ -80,4 +80,9 @@
     <string name="focus_sentence">Sentence</string>
     <string name="focus_paragraph">Paragraph</string>
     <string name="change_statistic">Change statistic</string>
+
+    <!-- Preview (T16) -->
+    <string name="preview_close">Close preview</string>
+    <string name="library_show_preview">Show preview</string>
+    <string name="shortcut_preview">Preview</string>
 </resources>

@@ -2881,3 +2881,204 @@ defaults misclassified a gesture, so none were retuned.
   `~/.config/mdwriter/` never touched; `/tmp/mdwriter-agent-key/` still holds the shared throwaway signing key.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T16 — Preview (WebView) + swipe to preview — DONE — 2026-09-27
+**What changed:**
+- `ui/preview/` (new package, `app/src/main/kotlin/dev/mdwriter/ui/preview/`): `PreviewOverlay.kt` (full-screen
+  slide+fade overlay, `PredictiveBackHandler` progress -> scale/edge-translate `graphicsLayer`, `editorSwipeNav`
+  start→end-only close, `arrow_back`/`share` glyph row in `WindowInsets.safeDrawing`); `PreviewWebView.kt`
+  (`class PreviewWebView : WebView` — JS off, `allowFileAccess`/`allowContentAccess` off, `blockNetworkLoads`
+  stays `true`, `WebViewAssetLoader` with `/assets/`/`/res/`/`/doc/` handlers, `PreviewLinkPolicy`-driven
+  `shouldOverrideUrlLoading`, Esc via `dispatchKeyEvent`, idempotent `show(page)`) + `PreviewWebViewHolder`
+  (lazy, Activity-context, `@Volatile currentDoc`, `destroy()`); `DocumentImagePathHandler.kt` (`/doc/` path
+  handler: `InternalFile` via real `File`s under `filesDir/library` with a canonical-path re-check, `TreeDoc` via
+  `DocumentsContract.findDocumentPath` + the 4-arg `ContentResolver.query` overload, per T14's own established
+  fix for the classic 5-arg overload's `UnsupportedOperationException` against a real `DocumentsProvider`);
+  `ImagePath.kt` (pure `split`/`walk`/`imageMime`); `PreviewLinkPolicy.kt` (pure, `java.net.URI`); `PreviewTheme.kt`
+  (`PreviewTheme` + `PreviewThemes.build(...)`, a `^[#(),.%\w\s'-]+$` value allow-list before anything reaches the
+  page's `<style>` block); `PreviewRenderer.kt` (`PreviewPage` + off-main `render(...)` via `MarkdownHtml` +
+  `PreviewSync`); `PreviewSync.kt` (pure heading-id lookup by regex).
+- `app/src/main/assets/preview/preview.css`: 02 §8 typography (12 `@font-face` rules for the 3 families ×
+  regular/italic/bold/bold-italic; H1–H6 = `calc(var(--size) * <multiplier>)` using the SAME 02 §3 multipliers as
+  the editor; hanging en-dash list bullets via `::before`, suppressed for task-list items; 2 px blockquote rule;
+  Mono code/pre on `--code-bg`; hairline table/hr rules; underlined links; GFM-alert styling).
+- `app/src/main/res/raw/mdwriter_keep.xml` (new): `tools:keep="@font/*"` — the release resource shrinker
+  (`optimization { enable = true }`) cannot see `WebViewAssetLoader.ResourcesPathHandler`'s runtime
+  `Resources.getIdentifier` font lookups.
+- `core/markdown/.../MarkdownHtml.kt`: `headingCount(markdown): Int` (same parser/extensions as `renderPage`, via
+  a small `AbstractVisitor` over `Heading` nodes) + `MarkdownHtmlPreviewTest.kt` (5 tests: ATX/setext counting,
+  fenced-code and front-matter exclusion, page-shape checks).
+- `ui/editor/EditorViewModel.kt`: new ctor param `previewRenderer: PreviewRenderer`; `val preview:
+  StateFlow<PreviewPage?>` (keeps the last page after close, so the exit animation still shows content);
+  `openPreview(text, caret, theme, title)` (cancels any previous render job, renders on
+  `PreviewRenderer`'s own `Dispatchers.Default`) / `closePreview()`; both set/clear `EditorUiState.previewOpen`
+  and a new `SavedStateHandle` key `previewOpen` (T20 owns actually restoring from it — Scope/Out).
+- `ui/root/AppCommands.kt`: `AppCommand.Preview`, `AppShortcuts.map` gains `KEYCODE_R -> Preview` (`Ctrl+Shift+R`
+  stays `null`, matching the existing Ctrl+N/O/L precedent).
+- `MainActivity.kt`: Keyboard Shortcuts Helper gains a "Preview" (Ctrl+R) `KeyboardShortcutInfo`.
+- `ui/editor/EditorHost.kt`: a second `ViewCompat.addAccessibilityAction` ("Show preview", `onOpenPreview`),
+  installed/removed the same way as T13's "Open library" one.
+- `ui/editor/EditorScreen.kt`: new `onPreview: () -> Unit` param, wired into `EditorHost`'s `onOpenPreview` and
+  `OverflowActions.onPreview` (the overflow menu / a11y action / EditorHost all share the one callback).
+- `ui/root/MdWriterRoot.kt`: replaced the T13 stub (`onOpenPreview = {}`, `previewAvailable = false`) with the
+  real thing — `previewHolder = remember { PreviewWebViewHolder(context, File(filesDir, "library")) }` +
+  `DisposableEffect(Unit) { onDispose { previewHolder.destroy() } }`; `previewTheme` computed via
+  `remember(colors, settings.typeface, settings.textSizeStep, settings.lineLength, widthClass, fontScale) { ... }`
+  (`TypedValue.applyDimension` for `bodyCssPx`, honouring non-linear font scale); a `LaunchedEffect(previewTheme)`
+  re-renders in place while the preview is already open; `openPreview()`/`closePreview()` local functions
+  (collapse selection, hide IME, close the modal drawer, close find, call `editorVm.openPreview(...)`);
+  `openLibrary()` now also closes the preview if it was open (mutual exclusion, Scope "In"); `previewAvailable =
+  true`; `AppCommand.Preview` in the `commands` collector toggles open/close; `PreviewOverlay(...)` composed at
+  the documented `PreviewSlot()` position — right before the root's own `findOpen`/selection `BackHandler`s, after
+  collecting `editorVm.preview`/`editorVm.current` — with `onShare = null` (T18 supplies it).
+- `res/values/strings.xml`: `preview_close`, `library_show_preview`, `shortcut_preview`.
+- JVM tests (all new, `app/src/test/kotlin/dev/mdwriter/ui/preview/`): `ImagePathTest` (11), `PreviewLinkPolicyTest`
+  (9), `PreviewThemeTest` (8), `PreviewSyncTest` (4); `AppShortcutsTest` gained 2 (Ctrl+R, Ctrl+Shift+R);
+  `EditorViewModelTest`'s `newVm()` helper gained a real `PreviewRenderer(testDispatcher)`.
+- Instrumented test (new): `app/src/androidTest/kotlin/dev/mdwriter/ui/preview/PreviewSmokeTest.kt` — a real
+  `PreviewWebView` added to the real `MainActivity` via `addContentView` (per the task's own Acceptance 5
+  wording), covering all of matrix a–f (see Verification).
+- `gradle/libs.versions.toml` / `app/build.gradle.kts`: added `androidx.test.uiautomator:uiautomator:2.4.0` as
+  `androidTestImplementation` only (see Deviations — Acceptance 5f's own wording requires a UiAutomator tap).
+  `androidx.webkit:webkit` was already present (added by an earlier task in anticipation of T16; confirmed via
+  `grep`, nothing added there).
+- `plans/01-architecture.md` §6.1: already mentioned `headingCount(markdown): Int (T16)` from planning — confirmed
+  present, no edit needed.
+
+**Verification:**
+- `make test` (core:markdown): `MarkdownHtmlPreviewTest` 5/5 green alongside the existing `MarkdownHtmlTest` 4/4.
+- `./gradlew :app:testDebugUnitTest`: full suite **671 JVM tests total (app + core:markdown), 0 failures/errors**
+  (new: `ImagePathTest=11 PreviewLinkPolicyTest=9 PreviewThemeTest=8 PreviewSyncTest=4` + 2 new `AppShortcutsTest`
+  cases + `MarkdownHtmlPreviewTest=5`). Acceptance 1–4 (exact scenarios named in the task) all present and green:
+  `split`/`walk`/`imageMime` cases (2), `PreviewLinkPolicy` cases incl. `intent:`/`file:`/`content:`/resolved-`.md`
+  (3), theme class/measure/safety cases + `PreviewSync` index cases (4).
+- `make format && make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → **BUILD SUCCESSFUL** (105 tasks: spotless,
+  full JVM suite, Android Lint, release R8 build). Lint SARIF: **0 errors**, 42 results (all pre-existing warning
+  classes; no new error-level findings). `grep -c INTERNET app/src/main/AndroidManifest.xml` → `1`, but that one
+  hit is the pre-existing T01 comment `<!-- Deliberately NO <uses-permission> at all: no INTERNET... -->`, not a
+  permission — confirmed via `aapt2 dump permissions` on both the debug and release APKs: only
+  `dev.mdwriter.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` (AGP-injected, pre-existing), no `INTERNET` anywhere.
+- `make test-device DEVICE=emulator-5554`: **63/63 green on a clean run** (`am force-stop` + a few seconds'
+  settle before the run — the same device-load-sensitive flakiness T13's own STATUS documented for
+  `SelectionToolbarTest` was reproduced here too, once for `SwipeNavTest.ctrlLOpensDrawerWhenFocusedAndUnfocused`
+  and once for the pre-existing `InstallStylingDeviceTest`, both **while the emulator still had stale state from
+  this task's own manual on-device QA** (dark mode left on, an old activity instance) — both pass in isolation
+  and a subsequent clean 63/63 run confirms neither is a real regression from this task's changes). Per-class:
+  `PreviewSmokeTest = 6/6` (Acceptance 5a–f, all green: `renderedContentShowsTextNotMarkers`,
+  `remoteImageIsBlockedButRestOfPageRenders`, `localCssAndFontAreServedOnTheDebugApp`,
+  `openingUnderAMidDocumentHeadingScrollsThePreview`, `relativeImageNextToTheNoteIsServedAndTraversalIsBlocked`,
+  `sanitizedJavascriptLinkStartsNoActivity`).
+- **A real, reproducible test-infrastructure finding along the way**: `WebViewAssetLoader` marks every response
+  `Cache-Control: private, max-age=31536000`. Running `PreviewSmokeTest` as part of the full suite (never in
+  isolation) intermittently showed `duo_regular.ttf`/`preview.css` missing from `requestLog` entirely — root
+  caused (via a temporary `Log.i` capture) to WebView's shared renderer-process cache serving those exact, fixed
+  URLs from an EARLIER test in the same instrumentation process without ever calling `shouldInterceptRequest`
+  again. Fixed in the test only (`cacheMode = LOAD_NO_CACHE` + `webView.clearCache(true)` in `@Before`) — this is
+  correct, desirable production behaviour (fonts/CSS never change at runtime), not a bug in `PreviewWebView`.
+- **A real production bug found and fixed via on-device QA, not by any automated test**: toggling dark mode
+  (`cmd uimode night yes`) while the preview was closed, then reopening it (swipe/Ctrl+R/overflow), kept
+  rendering the OLD (light) theme — screenshot evidence: `/tmp/t16-preview-dark.png` (bug, editor already dark,
+  preview still light) vs. `/tmp/t16-preview-dark2.png` (fixed, both dark). Root cause: `openPreview()`/
+  `closePreview()` (and the `AppCommand.Preview` branch of the `commands` collector) run inside closures that are
+  only ever composed ONCE for `MdWriterRoot`'s whole lifetime (`LaunchedEffect(commands)`'s key never changes;
+  the `movableContentOf`-wrapped `editor` tree is captured by a keyless `remember{}`, per T13's own documented
+  design) — a plain `previewTheme` local `val` read inside those bodies is fixed at first-composition time
+  forever, invisible to later theme changes (T13's own `openLibrary`/`swipeAccepts`/etc. don't have this problem
+  because they only ever read live `State`-backed objects — `paneVisible`, `controller.selection.value`,
+  `editorVm.uiState.value`). Fixed with `val currentPreviewTheme by rememberUpdatedState(previewTheme)`, the exact
+  same pattern `EditorSurface`'s `pointerInput` lambdas already use for the same reason (T13).
+- **Scroll-sync outcome (UNVERIFIED → verified): the URL-fragment approach works on this emulator, unmodified.**
+  A one-off probe (not kept in the final test — see below) rendered a 40-heading document, forced
+  `PreviewPage.fraction = 0f` while keeping a real `anchor` for heading 40, and loaded it: `scrollY` came back
+  `14664` (`> 0`), which could only have come from `loadDataWithBaseURL(base + "#heading-40", ...)`'s own
+  fragment auto-scroll, since the fraction fallback was deliberately neutralized. Kept the sketch's fragment-
+  first design with the proportional-fraction fallback exactly as specified (defensive; never observed to engage
+  on this device/OS combination, but zero-cost insurance for one where it might not apply) — no deviation.
+- **Font-path outcome: `WebViewAssetLoader.ResourcesPathHandler` works, no `FontPathHandler` fallback needed** —
+  confirmed three ways: (1) `PreviewSmokeTest.localCssAndFontAreServedOnTheDebugApp`, on-device, on
+  `dev.mdwriter.debug` (the `applicationIdSuffix` variant) — `requestLog` shows `.../assets/preview/preview.css`
+  and `.../res/font/duo_regular.ttf` both `served=true`; (2) release APK: `aapt2 dump resources
+  app-release.apk | grep -E 'font/(duo|quattro|mono)_regular'` → all 3 present (in fact all 15: 12 TTFs + 3
+  family XMLs — `mdwriter_keep.xml` worked); (3) a real release-build on-device screenshot
+  (`/tmp/t16-release-preview.png`) shows the same Duo glyph shapes as the debug screenshot, no Roboto fallback.
+- Manual on-device pass (`emulator-5554`, compact/phone, debug app unless noted):
+  - Light: overflow menu → Preview (`/tmp/t16-overflow-menu.png`, `/tmp/t16-preview-light.png`) — H1/H2/H3
+    headings visibly ≥ 1.5×/1.4×/1.25× the body glyph height, `#`/`##` markers absent, `` `code` `` monospaced on
+    `codeBg`, hanging list dashes, checkbox glyphs (one checked), blockquote rule, underlined link.
+  - A start→end swipe closed it (`/tmp/t16-after-swipe-close.png`, back to the raw-Markdown editor); an
+    end→start swipe on the editor opened it directly (`/tmp/t16-swipe-open.png`, no overflow menu needed);
+    `KEYCODE_CTRL_LEFT+KEYCODE_R` closed it (`/tmp/t16-ctrlR-close.png`) and, pressed again, reopened it
+    (`/tmp/t16-ctrlR-open.png`) — confirms the toggle behaviour.
+  - Predictive back: a slow edge drag (`input swipe` from `x=5`, 1200 ms) visibly scaled the whole preview down
+    and translated it toward the edge, WITH the system's own chevron affordance on top
+    (`/tmp/t16-predictive-back-mid.png`, captured mid-gesture via a backgrounded shell command) — the drag then
+    completed the close (`/tmp/t16-predictive-back-after.png`, back on the editor).
+  - Dark (`cmd uimode night yes`, fresh app launch): editor dark (`/tmp/t16-dark-editor.png`), preview dark after
+    the `rememberUpdatedState` fix (`/tmp/t16-preview-dark2.png`) — see the production-bug note above.
+  - Release build (`make apk KEYSTORE_DIR=/tmp/mdwriter-agent-key` then `make install
+    DEVICE=emulator-5554 KEYSTORE_DIR=/tmp/mdwriter-agent-key`; fresh install, no `dev.mdwriter` was present
+    beforehand so no `INSTALL_FAILED_UPDATE_INCOMPATIBLE`): editor (`/tmp/t16-release-editor.png`) and preview
+    (`/tmp/t16-release-preview.png`) both render Duo correctly.
+
+**Deviations from the plan:**
+- **Added `androidx.test.uiautomator:uiautomator:2.4.0` as an `androidTestImplementation`-only dependency**
+  (`gradle/libs.versions.toml` + `app/build.gradle.kts`), resolved from `google()` (already configured for
+  `androidx.*` in `settings.gradle.kts`). Not a casual version bump: Acceptance 5f's own wording ("verify with a
+  UiAutomator tap on the link text") requires it — the preview WebView has JS permanently off, so there is no
+  `evaluateJavascript`-based way to locate rendered link text on screen; UiAutomator's accessibility-tree lookup
+  is the only JS-free way to do this. Test-only; never shipped in the app APK.
+- **`rememberUpdatedState(previewTheme)` in `MdWriterRoot`** (see Verification's "real production bug" note) —
+  not in the task's own Reference sketch, but required for the preview to actually reflect a live theme change
+  when opened through any of the closures composed once per `MdWriterRoot` lifetime (swipe, `Ctrl+R`, overflow
+  menu, a11y action). No `01-architecture.md` change (implementation detail, same category as T13's own
+  `editorSwipeNav` `rememberUpdatedState` usage already documented there).
+- **`PreviewSmokeTest`'s `@Before` disables WebView caching** (`cacheMode = LOAD_NO_CACHE` + `clearCache(true)`)
+  — a test-only fix for `WebViewAssetLoader`'s intentional year-long `Cache-Control` header causing cross-test
+  interference within one instrumentation process (see Verification). Production `PreviewWebView` is unchanged
+  and SHOULD keep this caching (fonts/CSS never change at runtime).
+- No other deviations. Scroll-sync: fragment approach kept as primary (verified working, not falling back). Font
+  path: `ResourcesPathHandler` kept (verified working in both debug and release, not falling back to a custom
+  `FontPathHandler`). No library/plugin versions bumped beyond the one test-only addition above. No
+  `01-architecture.md` contract changes were needed (§6.1's `headingCount` mention was already present from
+  planning).
+
+**Known issues / follow-ups:**
+- `==highlight==` → `<mark>` in the preview is intentionally NOT implemented (Scope/Out: "not in v1" — would need
+  a custom commonmark-java `DelimiterProcessor`). `preview.css` already styles `mark { background:
+  var(--highlight-bg) }` for whenever that extension lands.
+- Side-by-side tablet preview, opening linked `.md` notes from preview links, and restoring an open preview
+  across process death (beyond the saved `previewOpen` flag) are all Scope/Out, owned by later tasks (v-next /
+  T20) per the task file.
+- The known trade-off the task itself calls out (a horizontally-scrolled code block competing with the
+  start→end exit swipe) was not specifically re-verified on-device this round; flagged for T22 QA per the task's
+  own Pitfalls note.
+- The emulator (`emulator-5554`, Android 17/API 37) was left in compact/phone mode, light mode (`cmd uimode
+  night no`), with the throwaway-signed release app (`dev.mdwriter`, `versionCode 387988`) installed ALONGSIDE
+  the debug app (`dev.mdwriter.debug`) — both were needed for Acceptance 6/7's screenshots and neither was
+  uninstalled (rule 13: only T21/T22 may remove the throwaway release app, and only when asked). The debug app's
+  Welcome note holds this task's own on-device scratch typing/state (harmless). `~/.config/mdwriter/` never
+  touched; `/tmp/mdwriter-agent-key/` still holds the shared throwaway signing key.
+
+**Notes for the next task:**
+- **T18 (Share)**: `PreviewOverlay`'s `onShare: (() -> Unit)?` parameter already exists and is wired from
+  `MdWriterRoot` as `onShare = null` — pass the real share action there; the glyph only renders when non-null
+  (already implemented, per the task's own Scope).
+- **T19 (Settings)**: no new work needed for the preview itself — `previewTheme`'s `remember` keys already include
+  every Settings field that affects it (`typeface`, `textSizeStep`, `lineLength`, `pureBlack` via `colors`); a
+  Settings sheet changing any of them while the preview is open will re-render live via the existing
+  `LaunchedEffect(previewTheme)`.
+- **T20**: `EditorUiState.previewOpen`'s `SavedStateHandle` key (`"previewOpen"`) is written on every
+  open/close but nothing reads it back yet on process restart — this is the seam T20 owns (per Scope/Out
+  "Restoring an open preview after process death").
+- Any future code that calls a local function defined inside `MdWriterRoot` from a closure captured by
+  `remember{}`/a stable-keyed `LaunchedEffect`/`movableContentOf` (i.e. anything NOT recomposed every frame)
+  must route any non-`State`-backed value it reads through `rememberUpdatedState` first — `paneVisible`/
+  `drawerState`/`controller`/`editorVm` are all fine as-is (State-backed or stable objects), but a plain
+  `remember(keys) { ... }` `val` like `previewTheme` is not, and this bit T16 in exactly this way.
+- `PreviewThemes.isSafeCssValue(String): Boolean` is the reusable check for "is this string safe to splice into
+  the preview page's `<style>` block" — a future task adding another CSS variable should validate through this,
+  not a new regex.
+- `DocumentImagePathHandler`'s `TreeDoc` branch is fully reusable (same `SafIo`/`DocumentsContract` conventions
+  T14 established) — nothing SAF-specific was duplicated.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.

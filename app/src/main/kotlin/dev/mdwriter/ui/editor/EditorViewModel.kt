@@ -42,6 +42,9 @@ import dev.mdwriter.data.storage.TextFormat
 import dev.mdwriter.data.storage.userMessage
 import dev.mdwriter.editor.FocusModeKind
 import dev.mdwriter.editor.InstallRequest
+import dev.mdwriter.ui.preview.PreviewPage
+import dev.mdwriter.ui.preview.PreviewRenderer
+import dev.mdwriter.ui.preview.PreviewTheme
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -103,6 +106,7 @@ class EditorViewModel(
     private val main: CoroutineDispatcher,
     private val handle: SavedStateHandle,
     private val clock: () -> Long,
+    private val previewRenderer: PreviewRenderer,
 ) : ViewModel(),
     AutosaveTarget,
     DocumentSession {
@@ -142,6 +146,15 @@ class EditorViewModel(
 
     private val _events = Channel<EditorEvent>(Channel.BUFFERED)
     val events: Flow<EditorEvent> = _events.receiveAsFlow()
+
+    // ---- T16: the preview overlay ------------------------------------------------------------------------------
+
+    private val _preview = MutableStateFlow<PreviewPage?>(null)
+
+    /** The last rendered page, kept even after [closePreview] so the exit animation still shows content. */
+    val preview: StateFlow<PreviewPage?> = _preview.asStateFlow()
+
+    private var previewJob: Job? = null
 
     // ---- AutosaveTarget --------------------------------------------------------------------------------------
 
@@ -339,6 +352,36 @@ class EditorViewModel(
      * back-ordering contract (01 §6.4 / §H): `BackHandler(enabled = ui.findOpen) { editorVm.closeFind() }`. */
     fun closeFind() {
         uiInternal.update { it.copy(findOpen = false) }
+    }
+
+    // ---- T16: preview -------------------------------------------------------------------------------------------
+
+    /** [text]/[caret] are a plain snapshot taken by the caller on main (`MdWriterRoot`'s `controller.snapshot()`/
+     * `.caret()`) — this VM never touches a View (01 §5). Cancels any previous render (a theme change while the
+     * preview is already open re-renders it the same way) and renders on [PreviewRenderer]'s own dispatcher
+     * (`Dispatchers.Default`, 01 §7), never blocking the caller. */
+    fun openPreview(
+        text: String,
+        caret: Int,
+        theme: PreviewTheme,
+        title: String,
+    ) {
+        uiInternal.update { it.copy(previewOpen = true) }
+        handle[KEY_PREVIEW_OPEN] = true
+        previewJob?.cancel()
+        previewJob =
+            viewModelScope.launch {
+                _preview.value = previewRenderer.render(text, caret, theme, title)
+            }
+    }
+
+    /** Leaves [preview] holding the last rendered page (so the exit animation still shows content) — only
+     * [EditorUiState.previewOpen] flips, which is what drives the overlay's own `AnimatedVisibility`. */
+    fun closePreview() {
+        previewJob?.cancel()
+        previewJob = null
+        uiInternal.update { it.copy(previewOpen = false) }
+        handle[KEY_PREVIEW_OPEN] = false
     }
 
     // ---- T15: Focus Mode / typewriter / word count settings, and the stats pipeline's result -------------------
@@ -633,6 +676,7 @@ class EditorViewModel(
         private const val KEY_DOC_KEY = "docKey"
         private const val KEY_SEL_START = "selStart"
         private const val KEY_SCROLL_Y = "scrollY"
+        private const val KEY_PREVIEW_OPEN = "previewOpen"
         private const val TREE_WATCH_DEBOUNCE_MS = 300L
 
         val Factory: ViewModelProvider.Factory =
@@ -653,6 +697,7 @@ class EditorViewModel(
                         main = container.dispatchers.main,
                         handle = createSavedStateHandle(),
                         clock = System::currentTimeMillis,
+                        previewRenderer = PreviewRenderer(container.dispatchers.default),
                     )
                 }
             }

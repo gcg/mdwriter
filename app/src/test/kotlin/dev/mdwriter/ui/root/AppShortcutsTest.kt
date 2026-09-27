@@ -18,6 +18,16 @@ class AppShortcutsTest {
     }
 
     @Test
+    fun ctrlRIsPreview() {
+        assertThat(AppShortcuts.map(KeyEvent.KEYCODE_R, ctrl = true)).isEqualTo(AppCommand.Preview)
+    }
+
+    @Test
+    fun ctrlShiftRIsNull() {
+        assertThat(AppShortcuts.map(KeyEvent.KEYCODE_R, ctrl = true, shift = true)).isNull()
+    }
+
+    @Test
     fun nWithoutCtrlIsNull() {
         assertThat(AppShortcuts.map(KeyEvent.KEYCODE_N, ctrl = false)).isNull()
     }

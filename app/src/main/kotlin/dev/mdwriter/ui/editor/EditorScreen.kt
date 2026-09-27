@@ -57,6 +57,7 @@ fun EditorScreen(
     onOpenLibrary: () -> Unit,
     libraryIcon: Int,
     onNewNote: () -> Unit,
+    onPreview: () -> Unit,
     swipeEnabled: () -> Boolean,
     swipeAccepts: (SwipeDir) -> Boolean,
     onSwipeArmedDown: () -> Unit,
@@ -178,6 +179,7 @@ fun EditorScreen(
             onSwipe = onSwipe,
             onTopTap = { vm.chrome.onTopTap() },
             onOpenLibrary = onOpenLibrary,
+            onOpenPreview = onPreview,
         )
         EditorChrome(
             visible = uiState.chromeVisible,
@@ -194,6 +196,7 @@ fun EditorScreen(
                     onUndo = controller::undo,
                     onRedo = controller::redo,
                     onNewNote = onNewNote,
+                    onPreview = onPreview,
                     focus =
                         OverflowChoice(
                             options = focusLabels,

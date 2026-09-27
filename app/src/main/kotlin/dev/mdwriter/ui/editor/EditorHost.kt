@@ -53,14 +53,25 @@ fun EditorHost(
     onSwipe: (SwipeDir) -> Unit = {},
     onTopTap: () -> Unit = {},
     onOpenLibrary: () -> Unit = {},
+    onOpenPreview: () -> Unit = {},
 ) {
     val colors = LocalWriterColors.current
     val currentOnOpenLibrary by rememberUpdatedState(onOpenLibrary)
+    val currentOnOpenPreview by rememberUpdatedState(onOpenPreview)
     val label = stringResource(R.string.library_open_library)
+    val previewLabel = stringResource(R.string.library_show_preview)
     DisposableEffect(controller, label) {
         val id =
             ViewCompat.addAccessibilityAction(controller.editText, label) { _, _ ->
                 currentOnOpenLibrary()
+                true
+            }
+        onDispose { ViewCompat.removeAccessibilityAction(controller.editText, id) }
+    }
+    DisposableEffect(controller, previewLabel) {
+        val id =
+            ViewCompat.addAccessibilityAction(controller.editText, previewLabel) { _, _ ->
+                currentOnOpenPreview()
                 true
             }
         onDispose { ViewCompat.removeAccessibilityAction(controller.editText, id) }
