@@ -9,6 +9,7 @@ import dev.mdwriter.data.document.ConflictNames
 import dev.mdwriter.data.document.DocumentRepository
 import dev.mdwriter.data.document.SaveState
 import dev.mdwriter.data.document.WelcomeNote
+import dev.mdwriter.data.library.AutoNamer
 import dev.mdwriter.data.library.DocRef
 import dev.mdwriter.data.library.LibraryRepository
 import dev.mdwriter.data.library.key
@@ -51,6 +52,7 @@ class EditorViewModelTest {
     private lateinit var library: LibraryRepository
     private lateinit var documents: DocumentRepository
     private lateinit var autosave: AutosaveCoordinator
+    private lateinit var autoNamer: AutoNamer
     private lateinit var appScope: CoroutineScope
     private val dataStoreJobs = mutableListOf<Job>()
     private var settingsFileCounter = 0
@@ -92,6 +94,7 @@ class EditorViewModelTest {
         documents = DocumentRepository(library, recovery, testDispatcher)
         appScope = CoroutineScope(Job())
         autosave = AutosaveCoordinator(appScope, testDispatcher)
+        autoNamer = AutoNamer(library, documents, settingsRepo, positionsRepo)
     }
 
     @After
@@ -112,6 +115,7 @@ class EditorViewModelTest {
             settings = settingsRepo,
             positions = positionsRepo,
             recovery = recovery,
+            autoNamer = autoNamer,
             appScope = appScope,
             main = testDispatcher,
             handle = handle,

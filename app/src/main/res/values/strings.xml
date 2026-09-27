@@ -20,4 +20,39 @@
     <string name="tb_code_block">Code block</string>
     <string name="tb_clear">Clear formatting</string>
     <string name="tb_select_all">Select all</string>
+
+    <!-- Library drawer (T12) -->
+    <string name="library_title">Library</string>
+    <string name="library_search">Search</string>
+    <string name="library_search_hint">Search notes</string>
+    <string name="library_close_search">Close search</string>
+    <string name="library_new_note">New note</string>
+    <string name="library_open_library">Open library</string>
+    <string name="library_locations">Locations</string>
+    <string name="library_on_this_device">On this device</string>
+    <string name="library_yesterday">Yesterday</string>
+    <string name="library_no_notes">No notes yet</string>
+    <string name="library_sort">Sort</string>
+    <string name="library_sort_date_modified">Date modified</string>
+    <string name="library_sort_name">Name</string>
+    <string name="library_sort_newest_first">Newest first</string>
+    <string name="library_sort_oldest_first">Oldest first</string>
+    <string name="library_sort_a_to_z">A–Z</string>
+    <string name="library_sort_z_to_a">Z–A</string>
+    <string name="library_new_folder">New folder…</string>
+    <string name="library_new_folder_title">New folder</string>
+    <string name="library_rename">Rename</string>
+    <string name="library_rename_title">Rename note</string>
+    <string name="library_duplicate">Duplicate</string>
+    <string name="library_move">Move…</string>
+    <string name="library_move_title">Move to…</string>
+    <string name="library_move_here">Move here</string>
+    <string name="library_delete">Delete</string>
+    <string name="library_deleted_undo">Deleted ‘%1$s’</string>
+    <string name="library_undo">Undo</string>
+    <string name="library_cancel">Cancel</string>
+    <string name="library_name_hint">Name</string>
+    <string name="library_name_empty">Name can\'t be empty</string>
+    <string name="library_name_exists">A note with this name already exists</string>
+    <string name="library_folder">Folder</string>
 </resources>

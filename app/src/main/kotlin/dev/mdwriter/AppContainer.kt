@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.preferencesDataStoreFile
 import dev.mdwriter.data.document.AutosaveCoordinator
 import dev.mdwriter.data.document.DocumentRepository
+import dev.mdwriter.data.library.AutoNamer
 import dev.mdwriter.data.library.LibraryRepository
 import dev.mdwriter.data.settings.PositionStore
 import dev.mdwriter.data.settings.SettingsRepository
@@ -51,11 +52,13 @@ class AppContainer(
 
     val recovery: RecoveryStore = RecoveryStore(File(app.noBackupFilesDir, "recovery"))
 
-    val library: LibraryRepository = LibraryRepository(internalStore, settings)
+    val library: LibraryRepository = LibraryRepository(internalStore, settings, dispatchers.io)
 
     val documents: DocumentRepository = DocumentRepository(library, recovery, dispatchers.io)
 
     val autosave: AutosaveCoordinator = AutosaveCoordinator(applicationScope, dispatchers.default)
+
+    val autoNamer: AutoNamer = AutoNamer(library, documents, settings, positions)
 
     init {
         // T10's own STATUS entry: "T11 must call internalStore.purgeTrash() on app start."

@@ -17,9 +17,12 @@ import dev.mdwriter.data.document.SaveResult
 import dev.mdwriter.data.document.SaveState
 import dev.mdwriter.data.document.Snapshot
 import dev.mdwriter.data.document.WelcomeNote
+import dev.mdwriter.data.library.AutoNamer
 import dev.mdwriter.data.library.DocKey
 import dev.mdwriter.data.library.DocRef
 import dev.mdwriter.data.library.FolderRef
+import dev.mdwriter.data.library.LeaveOutcome
+import dev.mdwriter.data.library.LeaveReason
 import dev.mdwriter.data.library.LibraryRepository
 import dev.mdwriter.data.library.LocationId
 import dev.mdwriter.data.library.fileName
@@ -46,6 +49,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
@@ -91,12 +95,14 @@ class EditorViewModel(
     private val settings: SettingsRepository,
     private val positions: PositionStore,
     private val recovery: RecoveryStore,
+    private val autoNamer: AutoNamer,
     private val appScope: CoroutineScope,
     private val main: CoroutineDispatcher,
     private val handle: SavedStateHandle,
     private val clock: () -> Long,
 ) : ViewModel(),
-    AutosaveTarget {
+    AutosaveTarget,
+    DocumentSession {
     private var started = false
 
     private var session: Session? = null
@@ -108,6 +114,11 @@ class EditorViewModel(
     private var lastSnapshot: Snapshot? = null
 
     private val uiInternal = MutableStateFlow(EditorUiState.INITIAL)
+
+    private val _current = MutableStateFlow<DocRef?>(null)
+
+    /** [DocumentSession.current]: the currently-open document, kept in sync on every install/rename/move. */
+    override val current: StateFlow<DocRef?> = _current.asStateFlow()
 
     val uiState: StateFlow<EditorUiState> =
         combine(uiInternal, autosave.state) { u, s -> u.copy(save = s) }
@@ -184,7 +195,7 @@ class EditorViewModel(
         viewModelScope.launch {
             val savedRef = handle.get<String>(KEY_DOC_KEY)?.let { DocKey(it).toRef() }
             if (savedRef != null) {
-                open(
+                installAndOpen(
                     savedRef,
                     showIme = false,
                     selection = handle.get<Int>(KEY_SEL_START) ?: 0,
@@ -205,12 +216,14 @@ class EditorViewModel(
         val ref = store.create(FolderRef.INTERNAL_ROOT, WelcomeNote.FILE_NAME)
         store.write(ref, TextCodec.encode(WelcomeNote.TEXT, TextFormat.DEFAULT))
         settings.update { it.copy(welcomeCreated = true) }
-        open(ref, showIme = false, selection = WelcomeNote.TEXT.length)
+        installAndOpen(ref, showIme = false, selection = WelcomeNote.TEXT.length)
     }
 
     /** Steps 3-5 of [start] ("last open doc at its remembered position" / "newest doc" / "a brand new note"); also
-     * used by [resolveConflict]'s `Close` action. */
+     * used by [resolveConflict]'s `Close` action. Flushes whatever was open before (a no-op at start-up, when
+     * nothing is). */
     private suspend fun openFallbackChain() {
+        flushAndRememberPrevious()
         val current = settings.current()
         val lastKey = current.lastOpenDoc
         val lastRef = lastKey?.toRef()
@@ -224,12 +237,12 @@ class EditorViewModel(
             }
         if (lastRef != null && lastStat != null) {
             val pos = positions.get(lastKey)
-            open(lastRef, showIme = false, selection = pos?.caret, scrollY = pos?.scrollY)
+            installAndOpen(lastRef, showIme = false, selection = pos?.caret, scrollY = pos?.scrollY)
             return
         }
         val newest = library.newestDoc()
         if (newest != null) {
-            open(newest, showIme = false)
+            installAndOpen(newest, showIme = false)
             return
         }
         createNewNoteAndOpen()
@@ -241,21 +254,85 @@ class EditorViewModel(
         viewModelScope.launch { createNewNoteAndOpen() }
     }
 
+    /** Flushes whatever was open before (a no-op when nothing was — both call sites of [openFallbackChain]/[start]
+     * hit that case; a real switch away from an open doc is already flushed by its own caller). */
     private suspend fun createNewNoteAndOpen() {
+        flushAndRememberPrevious()
         val ext = settings.current().newNoteExtension
         val store = library.storeFor(LocationId.Internal)
         val ref = store.create(FolderRef.INTERNAL_ROOT, "Untitled.$ext")
         settings.update { it.copy(autoNamed = it.autoNamed + ref.key().value) }
-        open(ref, showIme = true)
+        installAndOpen(ref, showIme = true)
     }
 
-    private suspend fun open(
+    // ---- DocumentSession -------------------------------------------------------------------------------------------
+
+    /** The library asked to open [ref]: flush the current doc, optionally auto-name/delete-if-empty it (never for
+     * a document being deleted — [leaveCurrent] = false), then install [ref] at its remembered position. */
+    override suspend fun open(
+        ref: DocRef,
+        showIme: Boolean,
+        leaveCurrent: Boolean,
+    ) {
+        val prevRef = session?.ref
+        if (prevRef != null) {
+            flushAndRememberPrevious()
+            if (leaveCurrent) autoNamer.onLeave(prevRef, LeaveReason.Switch)
+        }
+        val pos = positions.get(ref.key())
+        installAndOpen(ref, showIme, selection = pos?.caret, scrollY = pos?.scrollY)
+    }
+
+    override suspend fun flush() {
+        val snap = binding?.snapshot() ?: lastSnapshot
+        if (snap != null) autosave.flush(snap) else autosave.flush()
+    }
+
+    /** The library renamed/moved the currently-open document: re-point everything T11 keys by [DocRef] (01 §6.3). */
+    override fun onCurrentRefChanged(
+        old: DocRef,
+        new: DocRef,
+    ) {
+        val sess = session ?: return
+        sess.ref = new
+        sess.displayName = library.nameOf(new) ?: sess.displayName
+        _current.value = new
+        uiInternal.update { it.copy(doc = new, title = NoteFiles.baseName(sess.displayName)) }
+        handle[KEY_DOC_KEY] = new.key().value
+        viewModelScope.launch {
+            val oldKey = old.key()
+            val newKey = new.key()
+            val copy = recovery.read(oldKey)
+            if (copy != null) {
+                recovery.write(newKey, copy.text)
+                recovery.delete(oldKey)
+            }
+            settings.update { if (it.lastOpenDoc == oldKey) it.copy(lastOpenDoc = newKey) else it }
+        }
+    }
+
+    /** Called by `MdWriterRoot` right before the drawer opens: flush, then auto-name the current doc (never
+     * delete-if-empty — the user is still "in" it, per the T12 pitfalls). */
+    fun onDrawerOpened() {
+        viewModelScope.launch {
+            val ref = session?.ref ?: return@launch
+            flush()
+            when (val outcome = autoNamer.onLeave(ref, LeaveReason.DrawerOpened)) {
+                is LeaveOutcome.Renamed -> {
+                    onCurrentRefChanged(ref, outcome.newRef)
+                }
+
+                else -> {}
+            }
+        }
+    }
+
+    private suspend fun installAndOpen(
         ref: DocRef,
         showIme: Boolean,
         selection: Int? = null,
         scrollY: Int? = null,
     ) {
-        flushAndRememberPrevious()
         val loaded =
             try {
                 documents.load(ref)
@@ -264,6 +341,7 @@ class EditorViewModel(
                 return
             }
         session = Session(loaded.ref, loaded.baseline, loaded.format, loaded.readOnly, loaded.displayName)
+        _current.value = loaded.ref
         val key = loaded.ref.key()
         uiInternal.update {
             it.copy(
@@ -372,11 +450,22 @@ class EditorViewModel(
         val scrollY = binding?.scrollY() ?: (handle.get<Int>(KEY_SCROLL_Y) ?: 0)
         handle[KEY_SEL_START] = caret
         handle[KEY_SCROLL_Y] = scrollY
-        val key = session?.ref?.key()
+        val ref = session?.ref
+        val key = ref?.key()
         appScope.launch {
             withContext(NonCancellable) {
                 if (snap != null) autosave.flush(snap) else autosave.flush()
                 if (key != null) positions.put(key, Position(caret, scrollY))
+                // Auto-name only (never delete-if-empty on ON_STOP — the user is still "in" this note, T12 pitfalls).
+                if (ref != null) {
+                    when (val outcome = autoNamer.onLeave(ref, LeaveReason.Stopped)) {
+                        is LeaveOutcome.Renamed -> {
+                            onCurrentRefChanged(ref, outcome.newRef)
+                        }
+
+                        else -> {}
+                    }
+                }
             }
         }
     }
@@ -452,7 +541,8 @@ class EditorViewModel(
         val desired = if (ext.isEmpty()) base else "$base.$ext"
         val newRef = store.create(parent, desired)
         store.write(newRef, TextCodec.encode(snap.text, sess.format))
-        open(newRef, showIme = false)
+        flushAndRememberPrevious()
+        installAndOpen(newRef, showIme = false)
     }
 
     /** [clock] is injected for tests; UTC keeps [ConflictNames] output deterministic regardless of the device's
@@ -478,6 +568,7 @@ class EditorViewModel(
                         settings = container.settings,
                         positions = container.positions,
                         recovery = container.recovery,
+                        autoNamer = container.autoNamer,
                         appScope = container.applicationScope,
                         main = container.dispatchers.main,
                         handle = createSavedStateHandle(),
