@@ -33,6 +33,10 @@ class EditorScrollView(
     /** T06 hooks HangRoomSpan/restyle on a geometry change here. */
     var onGeometryChanged: ((EditorGeometry) -> Unit)? = null
 
+    /** T13: emits every scroll (`y`, `dy`) — [EditorController.scrollChanges]. Emit only; never touch padding here
+     * (rule 2). */
+    var onScrolled: ((y: Int, dy: Int) -> Unit)? = null
+
     override fun onMeasure(
         widthMeasureSpec: Int,
         heightMeasureSpec: Int,
@@ -82,6 +86,16 @@ class EditorScrollView(
         }
         style.textSizePx = g.textSizePx
         onGeometryChanged?.invoke(g)
+    }
+
+    override fun onScrollChanged(
+        l: Int,
+        t: Int,
+        oldl: Int,
+        oldt: Int,
+    ) {
+        super.onScrollChanged(l, t, oldl, oldt)
+        onScrolled?.invoke(t, t - oldt)
     }
 
     override fun onSizeChanged(

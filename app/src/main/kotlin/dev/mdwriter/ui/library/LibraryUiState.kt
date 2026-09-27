@@ -59,5 +59,7 @@ sealed interface LibraryUiState {
         val searching: Boolean,
         val query: String,
         val openDocKey: DocKey?,
+        /** Whether the drawer is showing a location's root (T13's folder-up back handler, 01 §6.4 / §H). */
+        val atRoot: Boolean,
     ) : LibraryUiState
 }

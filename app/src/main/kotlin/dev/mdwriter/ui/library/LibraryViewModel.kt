@@ -190,6 +190,7 @@ class LibraryViewModel(
             searching = raw.query != null,
             query = raw.query.orEmpty(),
             openDocKey = openKey,
+            atRoot = crumbList.size <= 1,
         )
     }
 
@@ -237,6 +238,9 @@ class LibraryViewModel(
         crumbs.update { if (it.size > 1) it.dropLast(1) else it }
     }
 
+    /** T13's folder-up back handler — same as [up]; named to match the back-ordering contract (01 §6.4 / §H). */
+    fun navigateUp() = up()
+
     // ---- search / sort --------------------------------------------------------------------------------------------
 
     fun startSearch() {
@@ -250,6 +254,10 @@ class LibraryViewModel(
     fun closeSearch() {
         query.value = null
     }
+
+    /** T13's search-clear back handler — same as [closeSearch]; named to match the back-ordering contract (01 §6.4
+     * / §H). */
+    fun clearSearch() = closeSearch()
 
     fun setSort(order: SortOrder) =
         viewModelScope.launch {
