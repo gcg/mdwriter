@@ -85,4 +85,18 @@
     <string name="preview_close">Close preview</string>
     <string name="library_show_preview">Show preview</string>
     <string name="shortcut_preview">Preview</string>
+
+    <!-- Find & replace (T17) -->
+    <string name="find_hint">Find</string>
+    <string name="replace_hint">Replace with</string>
+    <string name="find_previous">Previous match</string>
+    <string name="find_next">Next match</string>
+    <string name="find_close">Close find</string>
+    <string name="find_match_case">Match case</string>
+    <string name="find_replace_toggle">Replace</string>
+    <string name="find_replace_one">Replace</string>
+    <string name="find_replace_all">All</string>
+    <string name="find_replace_all_description">Replace all</string>
+    <string name="find_replaced">%d replaced</string>
+    <string name="shortcut_find">Find</string>
 </resources>

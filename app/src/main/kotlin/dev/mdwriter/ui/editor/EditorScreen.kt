@@ -1,9 +1,11 @@
 package dev.mdwriter.ui.editor
 
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -28,6 +30,7 @@ import dev.mdwriter.editor.EditorController
 import dev.mdwriter.editor.FocusModeKind
 import dev.mdwriter.editor.StatsInput
 import dev.mdwriter.editor.spans.toEditorColors
+import dev.mdwriter.ui.find.FindBarHost
 import dev.mdwriter.ui.gesture.SwipeDir
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
@@ -58,6 +61,7 @@ fun EditorScreen(
     libraryIcon: Int,
     onNewNote: () -> Unit,
     onPreview: () -> Unit,
+    onCloseFind: () -> Unit,
     swipeEnabled: () -> Boolean,
     swipeAccepts: (SwipeDir) -> Boolean,
     onSwipeArmedDown: () -> Unit,
@@ -169,60 +173,75 @@ fun EditorScreen(
             stringResource(R.string.focus_paragraph),
         )
 
-    Box(modifier.fillMaxSize()) {
-        EditorHost(
-            controller,
-            Modifier.fillMaxSize(),
-            swipeEnabled = swipeEnabled,
-            swipeAccepts = swipeAccepts,
-            onSwipeArmedDown = onSwipeArmedDown,
-            onSwipe = onSwipe,
-            onTopTap = { vm.chrome.onTopTap() },
-            onOpenLibrary = onOpenLibrary,
-            onOpenPreview = onPreview,
+    val findFocusToken by vm.findFocusToken.collectAsStateWithLifecycle()
+
+    Column(modifier.fillMaxSize()) {
+        FindBarHost(
+            visible = uiState.findOpen,
+            controller = controller,
+            focusToken = findFocusToken,
+            onClose = onCloseFind,
+            modifier = Modifier.fillMaxWidth(),
         )
-        EditorChrome(
-            visible = uiState.chromeVisible,
-            widthClass = controller.style.widthClass,
-            libraryIcon = libraryIcon,
-            onLibrary = onOpenLibrary,
-            overflowExpanded = overflowExpanded,
-            onOverflow = { overflowExpanded = true },
-            onOverflowDismiss = { overflowExpanded = false },
-            overflow =
-                OverflowActions(
-                    canUndo = canUndo,
-                    canRedo = canRedo,
-                    onUndo = controller::undo,
-                    onRedo = controller::redo,
-                    onNewNote = onNewNote,
-                    onPreview = onPreview,
-                    focus =
-                        OverflowChoice(
-                            options = focusLabels,
-                            selected = settings.focusMode.ordinal,
-                            onSelect = { index -> vm.setFocusMode(FocusModeKind.entries[index]) },
-                        ),
-                    typewriter = OverflowToggle(checked = settings.typewriter, onChange = vm::setTypewriter),
-                    wordCount = OverflowToggle(checked = settings.wordCount, onChange = vm::setWordCount),
-                ),
-            stats = { chromeVisible ->
-                StatsLine(
-                    stats = uiState.stats,
-                    isSelection = uiState.statsSelection,
-                    display = statsDisplay,
-                    typing = !chromeVisible,
-                    onCycle = { statsDisplay = statsDisplay.next() },
-                )
-            },
-            modifier = Modifier.align(Alignment.TopCenter),
-        )
-        uiState.conflict?.let { conflict ->
-            ConflictBanner(
-                conflict = conflict,
-                onAction = vm::resolveConflict,
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            EditorHost(
+                controller,
+                Modifier.fillMaxSize(),
+                swipeEnabled = swipeEnabled,
+                swipeAccepts = swipeAccepts,
+                onSwipeArmedDown = onSwipeArmedDown,
+                onSwipe = onSwipe,
+                onTopTap = { vm.chrome.onTopTap() },
+                onOpenLibrary = onOpenLibrary,
+                onOpenPreview = onPreview,
+                statusProtectionVisible = !uiState.findOpen,
+            )
+            EditorChrome(
+                visible = uiState.chromeVisible && !uiState.findOpen,
+                widthClass = controller.style.widthClass,
+                libraryIcon = libraryIcon,
+                onLibrary = onOpenLibrary,
+                overflowExpanded = overflowExpanded,
+                onOverflow = { overflowExpanded = true },
+                onOverflowDismiss = { overflowExpanded = false },
+                overflow =
+                    OverflowActions(
+                        canUndo = canUndo,
+                        canRedo = canRedo,
+                        onUndo = controller::undo,
+                        onRedo = controller::redo,
+                        onFind = vm::openFind,
+                        onNewNote = onNewNote,
+                        onPreview = onPreview,
+                        focus =
+                            OverflowChoice(
+                                options = focusLabels,
+                                selected = settings.focusMode.ordinal,
+                                onSelect = { index -> vm.setFocusMode(FocusModeKind.entries[index]) },
+                            ),
+                        typewriter = OverflowToggle(checked = settings.typewriter, onChange = vm::setTypewriter),
+                        wordCount = OverflowToggle(checked = settings.wordCount, onChange = vm::setWordCount),
+                    ),
+                stats = { chromeVisible ->
+                    if (!uiState.findOpen) {
+                        StatsLine(
+                            stats = uiState.stats,
+                            isSelection = uiState.statsSelection,
+                            display = statsDisplay,
+                            typing = !chromeVisible,
+                            onCycle = { statsDisplay = statsDisplay.next() },
+                        )
+                    }
+                },
                 modifier = Modifier.align(Alignment.TopCenter),
             )
+            uiState.conflict?.let { conflict ->
+                ConflictBanner(
+                    conflict = conflict,
+                    onAction = vm::resolveConflict,
+                    modifier = Modifier.align(Alignment.TopCenter),
+                )
+            }
         }
     }
 }

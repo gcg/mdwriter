@@ -348,10 +348,22 @@ class EditorViewModel(
         uiInternal.update { it.copy(drawerOpen = open) }
     }
 
-    /** T17 extends this; for T13 it only ever clears the (always-false) [EditorUiState.findOpen] flag, part of the
-     * back-ordering contract (01 §6.4 / §H): `BackHandler(enabled = ui.findOpen) { editorVm.closeFind() }`. */
+    /** Part of the back-ordering contract (01 §6.4 / §H): `BackHandler(enabled = ui.findOpen) { onClose() }`, where
+     * `onClose` also clears the [dev.mdwriter.editor.EditorController]'s find session (`MdWriterRoot` owns that
+     * three-step sequence; this VM only tracks the open/closed flag). */
     fun closeFind() {
         uiInternal.update { it.copy(findOpen = false) }
+    }
+
+    private val _findFocusToken = MutableStateFlow(0)
+
+    /** T17: bumped on every [openFind] call (including a Ctrl+F while already open) so `FindBarHost` knows to
+     * re-focus the query field and select all of it, even when [EditorUiState.findOpen] itself doesn't change. */
+    val findFocusToken: StateFlow<Int> = _findFocusToken.asStateFlow()
+
+    fun openFind() {
+        uiInternal.update { it.copy(findOpen = true) }
+        _findFocusToken.update { it + 1 }
     }
 
     // ---- T16: preview -------------------------------------------------------------------------------------------
@@ -441,6 +453,7 @@ class EditorViewModel(
                 title = NoteFiles.baseName(loaded.displayName),
                 loading = false,
                 readOnly = loaded.readOnly,
+                findOpen = false, // T17: a document switch closes the find bar (its session doesn't carry over)
                 conflict =
                     loaded.diskTextIfConflict?.let { diskText ->
                         ConflictState.ChangedOnDisk(diskText, loaded.baseline)

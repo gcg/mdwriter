@@ -23,6 +23,8 @@ class WriterColorsTest {
         val divider: Long,
         val scrim: Long,
         val danger: Long,
+        val searchMatch: Long,
+        val searchMatchFocused: Long,
     )
 
     private val light =
@@ -42,6 +44,8 @@ class WriterColorsTest {
             divider = 0xFFE2E2E2,
             scrim = 0x52000000,
             danger = 0xFFD93A2B,
+            searchMatch = 0x4DFFB000,
+            searchMatchFocused = 0x99FF9F00,
         )
     private val dark =
         Expected(
@@ -60,6 +64,8 @@ class WriterColorsTest {
             divider = 0xFF2E2E2E,
             scrim = 0x99000000,
             danger = 0xFFFF6B5E,
+            searchMatch = 0x26FFB84D,
+            searchMatchFocused = 0x55FFB84D,
         )
     private val black =
         Expected(
@@ -78,6 +84,8 @@ class WriterColorsTest {
             divider = 0xFF1F1F1F,
             scrim = 0xB3000000,
             danger = 0xFFFF6B5E,
+            searchMatch = 0x26FFB84D,
+            searchMatchFocused = 0x55FFB84D,
         )
 
     private fun assertMatches(
@@ -99,6 +107,8 @@ class WriterColorsTest {
         assertThat(colors.divider.toArgb().toLong() and 0xFFFFFFFFL).isEqualTo(e.divider)
         assertThat(colors.scrim.toArgb().toLong() and 0xFFFFFFFFL).isEqualTo(e.scrim)
         assertThat(colors.danger.toArgb().toLong() and 0xFFFFFFFFL).isEqualTo(e.danger)
+        assertThat(colors.searchMatch.toArgb().toLong() and 0xFFFFFFFFL).isEqualTo(e.searchMatch)
+        assertThat(colors.searchMatchFocused.toArgb().toLong() and 0xFFFFFFFFL).isEqualTo(e.searchMatchFocused)
     }
 
     @Test

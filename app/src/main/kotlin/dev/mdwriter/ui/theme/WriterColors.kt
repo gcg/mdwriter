@@ -22,6 +22,8 @@ data class WriterColors(
     val divider: Color,
     val scrim: Color,
     val danger: Color,
+    val searchMatch: Color,
+    val searchMatchFocused: Color,
     val isDark: Boolean,
 ) {
     /** Focus Mode overlay alpha (02 §2): bg drawn at this alpha over text gives focusDim (grey channel). */
@@ -45,6 +47,8 @@ val LightWriterColors =
         divider = Color(0xFFE2E2E2),
         scrim = Color(0x52000000),
         danger = Color(0xFFD93A2B),
+        searchMatch = Color(0x4DFFB000),
+        searchMatchFocused = Color(0x99FF9F00),
         isDark = false,
     )
 val DarkWriterColors =
@@ -64,6 +68,8 @@ val DarkWriterColors =
         divider = Color(0xFF2E2E2E),
         scrim = Color(0x99000000),
         danger = Color(0xFFFF6B5E),
+        searchMatch = Color(0x26FFB84D),
+        searchMatchFocused = Color(0x55FFB84D),
         isDark = true,
     )
 val BlackWriterColors =
@@ -83,6 +89,8 @@ val BlackWriterColors =
         divider = Color(0xFF1F1F1F),
         scrim = Color(0xB3000000),
         danger = Color(0xFFFF6B5E),
+        searchMatch = Color(0x26FFB84D),
+        searchMatchFocused = Color(0x55FFB84D),
         isDark = true,
     )
 

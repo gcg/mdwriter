@@ -4,7 +4,7 @@ import android.view.KeyEvent
 
 /** App-level keyboard shortcuts (01 §6.2), dispatched from `MainActivity.onKeyShortcut` into a `commands` flow that
  * `MdWriterRoot` collects. T16 adds `Preview` (Ctrl+R), T17 adds `Find` (Ctrl+F). */
-enum class AppCommand { NewNote, ToggleLibrary, Preview }
+enum class AppCommand { NewNote, ToggleLibrary, Preview, Find }
 
 /** Pure key map — no `KeyEvent` instance is ever touched, only its `public static final int` constants (inlined by
  * the Kotlin compiler), so this needs no Robolectric. */
@@ -20,6 +20,7 @@ object AppShortcuts {
             KeyEvent.KEYCODE_N -> if (shift) null else AppCommand.NewNote
             KeyEvent.KEYCODE_O, KeyEvent.KEYCODE_L -> if (shift) null else AppCommand.ToggleLibrary
             KeyEvent.KEYCODE_R -> if (shift) null else AppCommand.Preview
+            KeyEvent.KEYCODE_F -> if (shift) null else AppCommand.Find
             else -> null
         }
     }

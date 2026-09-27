@@ -54,6 +54,7 @@ fun EditorHost(
     onTopTap: () -> Unit = {},
     onOpenLibrary: () -> Unit = {},
     onOpenPreview: () -> Unit = {},
+    statusProtectionVisible: Boolean = true,
 ) {
     val colors = LocalWriterColors.current
     val currentOnOpenLibrary by rememberUpdatedState(onOpenLibrary)
@@ -96,12 +97,15 @@ fun EditorHost(
             onSwipe = onSwipe,
             onTopTap = onTopTap,
         )
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .windowInsetsTopHeight(WindowInsets.statusBars)
-                .background(colors.bg.copy(alpha = WriterDimens.STATUS_PROTECTION_ALPHA)),
-        )
+        // T17: hidden while find is open — the find bar itself paints `surface` behind the status bar.
+        if (statusProtectionVisible) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .windowInsetsTopHeight(WindowInsets.statusBars)
+                    .background(colors.bg.copy(alpha = WriterDimens.STATUS_PROTECTION_ALPHA)),
+            )
+        }
     }
 }
 

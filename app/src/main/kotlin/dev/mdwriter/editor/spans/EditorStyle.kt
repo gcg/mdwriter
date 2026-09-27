@@ -20,6 +20,8 @@ data class EditorColors(
     val highlightBg: Int,
     val highlightText: Int,
     val focusDim: Int,
+    val searchMatch: Int,
+    val searchMatchFocused: Int,
 )
 
 fun WriterColors.toEditorColors(): EditorColors =
@@ -34,6 +36,8 @@ fun WriterColors.toEditorColors(): EditorColors =
         highlightBg = highlightBg.toArgb(),
         highlightText = highlightText.toArgb(),
         focusDim = focusDim.toArgb(),
+        searchMatch = searchMatch.toArgb(),
+        searchMatchFocused = searchMatchFocused.toArgb(),
     )
 
 /**

@@ -126,6 +126,11 @@ class EditorController(
     /** T09 (01 §6.2): visibility/anchor/range of the current selection, in [scrollView] viewport coords. */
     val selection: StateFlow<SelectionState> = selectionUi.state
 
+    private val findSession = FindSession(editText)
+
+    /** T17 (01 §6.2): the live find/replace state — count, focused index, truncation. */
+    val findResult: StateFlow<FindResult> get() = findSession.result
+
     private val commandsImpl =
         object : EditorCommands {
             override fun perform(action: ToolbarAction) = this@EditorController.perform(action)
@@ -201,6 +206,7 @@ class EditorController(
 
     /** Main thread; builds the styled text off-main, then a single `setText` installs it. */
     suspend fun install(doc: InstallRequest) {
+        findSession.clear()
         restyler.suspended = true
         val t0 = SystemClock.uptimeMillis()
         val gutter = style.gutterPx
@@ -400,10 +406,99 @@ class EditorController(
 
     fun scrollY(): Int = scrollView.scrollY
 
+    // ---- T17: find & replace (01 §6.2) ---------------------------------------------------------------------------
+
+    /** Main thread; searches on [Dispatchers.Default] and snapshots the text on main first (never search on the
+     * main thread — the task's own Pitfalls/01 §7). Discards the result if [version] changed while it ran (a
+     * concurrent edit already re-triggers the debounced caller). Empty [query] clears the session. */
+    suspend fun find(
+        query: String,
+        matchCase: Boolean,
+    ): FindResult {
+        if (query.isEmpty()) {
+            findSession.clear()
+            return FindResult.NONE
+        }
+        val newQuery = query != findSession.query || matchCase != findSession.matchCase
+        val text = snapshot()
+        val v = version
+        val r = withContext(Dispatchers.Default) { TextSearch.findAll(text, query, matchCase) }
+        if (v != version) return findResult.value // stale: the edit that changed `version` re-triggers find
+        val anchor =
+            if (newQuery) {
+                editText.selectionStart.coerceAtLeast(0)
+            } else {
+                findSession.focusedStart().coerceAtLeast(0)
+            }
+        findSession.set(
+            query,
+            matchCase,
+            r,
+            TextSearch.indexAtOrAfter(r, anchor),
+            r.size / 2 >= TextSearch.MAX_MATCHES,
+            reveal = newQuery,
+        )
+        return findResult.value
+    }
+
+    fun findNext() = findSession.step(+1)
+
+    fun findPrevious() = findSession.step(-1)
+
+    /** Replaces the focused match with [replacement] as one undo step; a no-op (returns `false`) when there is no
+     * focused match or the document is read-only. */
+    fun replaceCurrent(replacement: String): Boolean {
+        val m = findSession.focusedRange() ?: return false
+        if (editText.readOnly) return false
+        apply(TextEdit(m.first, m.last + 1, replacement, m.first + replacement.length, m.first + replacement.length))
+        findSession.afterReplace(m.first, replacement.length)
+        return true
+    }
+
+    /** Replaces every current match with [replacement] as exactly ONE undo step (never a loop of N `apply` calls,
+     * never a whole-document replace — the task's own Pitfalls). Returns the number of matches replaced, `0` when
+     * there is no query, the document is read-only, or nothing matched. Searches on [Dispatchers.Default]. */
+    suspend fun replaceAll(replacement: String): Int {
+        val q = findSession.query
+        if (q.isEmpty() || editText.readOnly) return 0
+        val mc = findSession.matchCase
+        val text = snapshot()
+        val v = version
+        val caret = editText.selectionStart
+        val (edit, n) =
+            withContext(Dispatchers.Default) {
+                val r = TextSearch.findAll(text, q, mc, Int.MAX_VALUE)
+                TextSearch.replaceAll(text, r, replacement, caret) to r.size / 2
+            }
+        if (v != version || edit == null) return 0
+        apply(edit) // exactly one undo step
+        return n
+    }
+
+    /** Closes the find session; [selectFocused] leaves the (still-live) focused match selected. */
+    fun clearFind(selectFocused: Boolean = false) {
+        val m = findSession.focusedRange()
+        findSession.clear()
+        if (selectFocused && m != null) editText.setSelection(m.first, m.last + 1)
+    }
+
+    /** Pre-fills the find bar from the current selection: 1..200 chars, no newline; `null` otherwise. */
+    fun selectedTextForFind(): String? {
+        val a = minOf(editText.selectionStart, editText.selectionEnd)
+        val b = maxOf(editText.selectionStart, editText.selectionEnd)
+        if (a < 0 || b <= a || b - a > SELECTED_FIND_MAX_CHARS) return null
+        val s = editText.text?.subSequence(a, b)?.toString() ?: return null
+        return s.takeUnless { it.contains('\n') }
+    }
+
     fun release() {
         scrollView.onGeometryChanged = null
         scrollView.onScrolled = null
         editText.removeTextChangedListener(mdUndo)
         editText.removeOnAttachStateChangeListener(selectionUi)
+    }
+
+    private companion object {
+        const val SELECTED_FIND_MAX_CHARS = 200
     }
 }

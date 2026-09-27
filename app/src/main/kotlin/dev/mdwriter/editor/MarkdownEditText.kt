@@ -150,6 +150,9 @@ class MarkdownEditText(
         textSelectHandleRight?.let { setTextSelectHandleRight(it.mutate().apply { setTint(c.accent) }) }
         focusOverlay.setColor(focusOverlayArgb(c.bg, c.text, c.focusDim))
         if (focusMode != FocusModeKind.Off) invalidate()
+        // T17: TextView-native search-result highlight colours (01 §10 hard rules 5/6 — not spans).
+        setSearchResultHighlightColor(c.searchMatch)
+        setFocusedSearchResultHighlightColor(c.searchMatchFocused)
     }
 
     /** The EditText never scrolls itself (01 §4.4, factcheck A15). `bringPointIntoView` still reaches the ScrollView. */
