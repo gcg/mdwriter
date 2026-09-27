@@ -3330,3 +3330,311 @@ search-highlight approach exactly as specified, never falling back to spans.
   risking `TransactionTooLargeException` — prefer it over a literal multi-hundred-KB `text` argument.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T18 — Open from other apps, share in/out, export all notes — DONE — 2026-09-27
+**What changed:**
+- `AndroidManifest.xml`: 3 intent filters on `MainActivity` (VIEW/EDIT for `content:` + `text/markdown`/
+  `text/x-markdown`/`text/plain`; a fallback VIEW/EDIT filter for `content` + `host="*"` + `mimeType="*/*"` with
+  `pathSuffix` `.md`/`.markdown`/`.mdown`/`.mkd`; SEND for the same three MIME types) — **no `BROWSABLE` category
+  anywhere** (hard rule 1 / platform §3.2). A `<provider android:name="androidx.core.content.FileProvider"
+  android:authorities="${applicationId}.files">` pointing at the new `res/xml/file_paths.xml`
+  (`<cache-path name="exports" path="exports/"/>`).
+- `intents/IntentRouter.kt` (new): `RoutedIntent` (`OpenExternal`/`ShareText`/`ShareStream`/`None`) +
+  `IntentRouter.parse(intent, ownAuthority)` copied essentially verbatim from the task's Reference B.
+- `intents/SharedNote.kt` (new): `data class SharedNote(baseName, body)` with `companion object { fun
+  compose(subject, text) }` (not a same-named `object` — the file list's own wording "compose(...) → SharedNote(...)"
+  reads naturally as a factory on the data class itself).
+- `data/settings/RecentList.kt` (new): pure `RecentList.push(list, item, cap = 100): Pair<List<String>,
+  List<String>>` (new list, evicted).
+- `data/storage/ExternalDocStore.kt` (new): `DocumentStore` for `DocRef.External`. `list` → `emptyList()`;
+  `create`/`createFolder`/`rename`/`trash`/`move` → `StorageException(ReadOnly)`; `restore` → `null`; `changes` →
+  `emptyFlow()`. `read`/`write` reuse `SafIo.readAll`/`SafIo.writeWt` (byte-level ops that don't depend on a fixed
+  projection); `write` throws `ReadOnly` unless `ref.writable`. `stat`/`displayName` use their OWN null-projection
+  `ContentResolver.query` (never `SafIo`'s fixed `Document.*` `PROJECTION` — an arbitrary provider, e.g. a mail
+  attachment, may not support those exact columns at all) reading `OpenableColumns.SIZE`/`DISPLAY_NAME` plus
+  `Document.COLUMN_LAST_MODIFIED` when present; `displayName` falls back to `uri.lastPathSegment ?: "Untitled.md"`.
+  `adopt(uri, persistable)`: writability is ALWAYS `checkCallingOrSelfUriPermission(...WRITE...)`, never inferred
+  from the intent action; only persists the grant when `persistable`, catching `SecurityException` (not every
+  provider allows it); remembers the key via `RecentList.push` (cap 100) and releases the evicted grant.
+  `refresh(ref)`: recomputes `writable`, throws `PermissionLost` if the document can no longer even be `stat`ted.
+- `intents/IntentHandler.kt` (new): `IntentOutcome` (`Open`/`Message`/`Nothing`) + `IntentHandler.resolve(r)`.
+  `OpenExternal`: `treeDocFor(uri)` (same-authority `isChildDocument` check against every Ready linked tree) wins
+  over a fresh `externalStore.adopt`. `ShareText`: `SharedNote.compose` → `library.createUnique` → write → `Open(_,
+  showIme = true)`. `ShareStream`: name via `externalStore.displayName` (falls back to `"<base>.md"` when
+  `NoteFiles.isSupported` is false) → read via `externalStore.read` (throws `TooLarge` above `MAX_OPEN_BYTES`,
+  mapped to "Too large for mdwriter") → `TextCodec.decode` `Binary` → "Only text files can be imported" → unique
+  internal name → write bytes **UNCHANGED**. Every `StorageException`/`SecurityException` → `IntentOutcome.Message`.
+- `intents/ShareOut.kt` (new): `ShareOut.intentFor(ref)` — copies the doc's bytes to
+  `cacheDir/exports/<uuid>/<name>` (sweeping sub-folders older than a day first), `FileProvider.getUriForFile(app,
+  "${app.packageName}.files", file)` (runtime `packageName`, never a literal authority string — the debug app is
+  `dev.mdwriter.debug`), `ACTION_SEND` with `FLAG_GRANT_READ_URI_PERMISSION` **and** an explicit
+  `send.clipData = ClipData.newRawUri(...)` (`Intent.setClipData` returns `void`, not chainable — a real compile
+  error caught immediately), `EXTRA_TEXT` only when the decoded text is ≤ 100k chars (the Binder transaction-size
+  pitfall).
+- `data/export/ExportAllNotes.kt` (new): `ExportSummary(files, bytes)`, `ExportStatus` (`Idle`/`Running(done,
+  total)`/`Done`/`Failed`). `companion object` `ZIP_ROOT = "mdwriter-notes/"` and a pure, no-`Context`-needed
+  `suggestedName(today: LocalDate = LocalDate.now())` (ISO date) — the instance method of the same name just
+  delegates, so the ISO-date test needs no Robolectric. `writeZip(root, out, onProgress)`: walks `root` skipping any
+  dotfile/dot-folder (`.trash`/recovery live outside `filesDir/library`, but a `.x.tmp` write-in-progress temp file
+  does not and must never be zipped), a folder with no file anywhere below it becomes its own empty-folder entry,
+  every real file copied with a 64 KiB buffer and its `ZipEntry.time` set from `File.lastModified()`, `onProgress`
+  after each file. `start(uri)`: ignored while already `Running`; runs in `appScope` under `NonCancellable + io`;
+  `resolver.openOutputStream(uri, "wt")` falling back to `"w"` on `IllegalArgumentException` (hard rule 15).
+- `ui/editor/ReadOnlyPill.kt` (new): top-centre, under `WindowInsets.statusBars`, 32 dp min height (fully rounded,
+  `surface` + hairline border, `minimumInteractiveComponentSize()` for the ≥48dp touch target), "Read-only · " in
+  `textSecondary` + "Save a copy to Library" in `accent`, the whole row is the tap target.
+- `ui/library/ExportAllNotesAction.kt` (new): `rememberExportAllNotes(exporter, session): () -> Unit` (flush →
+  `ActivityResultContracts.CreateDocument("application/zip")` launched with `exporter.suggestedName()` → `uri?.let
+  { exporter.start(it) }`); `ExportProgress(status)` (2 dp `LinearProgressIndicator`, `accent`/`divider`, renders
+  nothing outside `Running`).
+- `data/library/LibraryRepository.kt`: new `externalStore: DocumentStore? = null` constructor param (defaulted,
+  last positional — every existing 2/3-arg test call site unaffected); `storeFor(ref: DocRef.External)` now returns
+  it instead of always throwing.
+- `ui/editor/EditorViewModel.kt`: three new constructor params (`intentHandler: IntentHandler`, `externalStore:
+  ExternalDocStore`, `shareOut: ShareOut`). `start()` gains `(initial: DocRef? = null, initialShowIme: Boolean =
+  false)`: the saved-`docKey` restore path now runs FIRST regardless of `initial` (process-death restore always
+  wins — `initial` only ever replaces steps 3-5, never step 1); an `x:` (External) saved ref is re-checked via the
+  new `restoreExternal` (`externalStore.refresh`, `Message("Access to '<name>' ended — open it again from the
+  other app")` + fall-through on failure); `createWelcomeNote` gained an `openIt: Boolean` param (still created,
+  never opened, on a first launch that also carries a non-null `initial`). New `startWith(launch: RoutedIntent)`
+  (resolve → `start(ref, showIme)` / `start()` + `Message`) and `handle(r: RoutedIntent)` (`flush()` FIRST — 01
+  §6.3, since resolving a `ShareText`/`ShareStream` outcome may itself create a file — THEN resolve THEN
+  `open(ref, showIme, leaveCurrent = true)` or the message). New `saveCopyToLibrary()` (public, launches its own
+  coroutine): `library.createUnique` + write with the loaded `TextFormat`, seeds `positions.put(copy.key(), ...)`
+  with the LIVE caret/scroll BEFORE calling the existing `DocumentSession.open(copy, showIme = false, leaveCurrent
+  = false)` — reusing `open()`'s own `positions.get(ref.key())` lookup is what makes the copy open "at the same
+  caret" without duplicating any of `open()`'s flush/install logic. New `shareCurrent()` (flush → `shareOut.intentFor
+  (current)` → `EditorEvent.ShareIntent`, catching `StorageException` → `Message("Couldn't share: ...")`).
+- `ui/editor/EditorUiState.kt` / `ui/library/LibraryUiState.kt`: both gained a `ShareIntent(intent: Intent)`
+  variant on their respective one-shot event sealed interfaces — neither `EditorViewModel` nor `LibraryViewModel`
+  ever touches a `Context`/starts an `Intent` itself (01 §5); the one Compose collector of each event stream
+  (`EditorScreen`'s `vm.events.collect`, `MdWriterRoot`'s single `libraryVm.events` collector) does that.
+- `ui/editor/EditorScreen.kt`: `LocalContext.current` read once; the events collector's `when` gained `is
+  EditorEvent.ShareIntent -> context.startActivity(e.intent)`; `OverflowActions(..., onShare = vm::shareCurrent,
+  ...)`; the read-only pill renders in the same `Box` slot as `ConflictBanner` (an `if (conflict != null) {
+  ConflictBanner(...) } else { if (readOnly && doc is DocRef.External) ReadOnlyPill(...) }` — the banner always
+  wins, matching the task's own priority note, though in practice a read-only doc never has autosave running so a
+  conflict can't arise on one anyway).
+- `ui/library/LibraryViewModel.kt`: two new constructor params (`shareOut: ShareOut`, `exporter: ExportAllNotes`);
+  new `share(entry)` (flush-if-open → `shareOut.intentFor` → `LibraryEvent.ShareIntent`, or `Message("Couldn't
+  share: ...")`); `init {}` gained a second `viewModelScope.launch` collecting `exporter.status` and turning
+  `Done`/`Failed` into `LibraryEvent.Message("Exported N notes" / "Export failed — <msg>")` — this is what makes
+  the drawer's OWN existing snackbar host show the export result, per the task's own wording, without threading a
+  second `SnackbarHostState` through `LibraryContent`.
+- `ui/library/LibraryContent.kt`: `LibraryDrawer` gained required `exporter: ExportAllNotes, session:
+  DocumentSession` params, builds `rememberExportAllNotes(exporter, session)` and reads `exporter.status`, wires
+  both into `LibraryContent`'s new `onShare`/`onExportAllNotes`/`exportStatus` params (all defaulted so
+  `LibraryUiTest`'s direct `LibraryContent(...)` construction is unaffected); `ExportProgress` renders right after
+  `DrawerHeader`; the `FileRow` call site's `rowMenuExtras` now renders a new private `ShareMenuItem` (between
+  Move… and Delete, per 02 §7); the `LocationId.Internal` `LocationRow` now passes `onExportAllNotes = onExportAllNotes`.
+- `ui/library/FileRow.kt`: `LocationRow` gained an optional `onExportAllNotes: (() -> Unit)? = null` — long-press
+  (only when non-null) opens a one-item `DropdownMenu` ("Export all notes…"), the SAME menu component
+  `TreeLocationRow`'s own "Stop using this folder" long-press already uses (T14).
+- `ui/library/LibraryPane.kt`: forwards the same new `exporter`/`session` params straight through to `LibraryDrawer`
+  (still a thin, width-only wrapper — no logic duplicated).
+- `ui/root/MdWriterRoot.kt`: new required params `launch: RoutedIntent, newIntents: Flow<RoutedIntent>` (no
+  defaults, matching 01 §6.4's own literal signature and T13's own no-default precedent for `commands`);
+  `LaunchedEffect(editorVm) { editorVm.start() }` → `editorVm.startWith(launch)`, plus a new
+  `LaunchedEffect(editorVm) { newIntents.collect(editorVm::handle) }`; `LibraryViewModel(...)` gains `shareOut =
+  container.shareOut, exporter = container.exporter`; both `LibraryDrawer`/`LibraryPane` call sites now pass
+  `container.exporter, editorVm` (as `DocumentSession`); `libraryVm.events`' `when` gained `is
+  LibraryEvent.ShareIntent -> context.startActivity(event.intent)`; `PreviewOverlay(..., onShare = { editorVm
+  .shareCurrent() })` replaces the T16 stub `onShare = null` — **the preview share glyph IS wired**, reusing the
+  exact same `shareCurrent()` the overflow icon uses (shares whatever `current` doc is open, preview or not).
+- `MainActivity.kt`: `newIntents = Channel<RoutedIntent>(Channel.BUFFERED)`; `onCreate` parses the launch intent
+  via `IntentRouter.parse(intent, ownAuthority)` **only when `savedInstanceState == null`** (never on rotation/
+  process-death restore — otherwise shared text would be re-imported every recreation), `ownAuthority =
+  "$packageName.files"`; `addOnNewIntentListener { newIntents.trySend(IntentRouter.parse(it, ownAuthority)) }`
+  (`IntentRouter.parse` itself also always treats `FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY` as `None`, covering a
+  plain relaunch from Recents even on a fresh `onCreate`).
+- `MdWriterApp.kt`: debug-only, API-37-guarded StrictMode addition — `if (BuildConfig.DEBUG && Build.VERSION
+  .SDK_INT >= 37) StrictMode.setVmPolicy(Builder(StrictMode.getVmPolicy()).detectImplicitUriPermissionGrant()
+  .penaltyLog().build())` (same debug-build gate `util/Log.kt` already uses; `Builder(getVmPolicy())` so a later
+  T20 addition only ever extends this, never replaces it).
+- `AppContainer.kt`: `externalStore: ExternalDocStore` (built right after `safIo`/`treeGrants`, passed into
+  `library`'s new `externalStore` param); `intentHandler: IntentHandler`; `shareOut: ShareOut`; `exporter:
+  ExportAllNotes` (rooted at `File(app.filesDir, "library")`, `appScope`, `dispatchers.io`).
+- `res/xml/file_paths.xml` (new): `<paths><cache-path name="exports" path="exports/"/></paths>`.
+- `res/values/strings.xml`: `read_only_prefix`, `save_copy_to_library`, `library_export_all_notes`,
+  `library_export_done`, `library_export_failed` (the last two are documentation-only — the actual snackbar text
+  is built as a plain Kotlin string in `LibraryViewModel`'s `exporter.status` collector, matching the task's exact
+  wording "Exported N notes" — kept the two string resources anyway since T19 or a future i18n pass may want them).
+- Tests (all new unless noted): `intents/IntentRouterTest.kt` (12, Robolectric), `intents/SharedNoteTest.kt` (8),
+  `data/settings/RecentListTest.kt` (3), `data/export/ExportAllNotesTest.kt` (6), `data/storage/
+  ExternalDocStoreTest.kt` (6, Robolectric + `TestDocumentsProvider`), `intents/ShareOutTest.kt` (3, Robolectric);
+  `ui/editor/EditorViewModelTest.kt` (converted to `@RunWith(AndroidJUnit4::class)` — needed for the new
+  `readOnlyExternalSaveCopyOpensLibraryCopy` case's real `TestDocumentsProvider` — plus 3 new cases:
+  `shareTextCreatesNoteOpensWithIme`, `newIntentFlushesCurrentFirst`, `readOnlyExternalSaveCopyOpensLibraryCopy`);
+  `ui/library/LibraryViewModelTest.kt` (updated construction only, new `shareOut`/`exporter` params — neither
+  `share()` nor `start()` is exercised by that test class, so both are built with a bare `android.app.Application()`
+  and no Robolectric needed there).
+
+**Verification:**
+- `./gradlew :app:testDebugUnitTest :core:markdown:test` → **BUILD SUCCESSFUL, 765 tests total, 0 failures** (515
+  `:app` + 250 `:core:markdown`; 724 pre-T18 + 41 new: 12+8+3+6+6+3 new classes + 3 new `EditorViewModelTest` cases).
+  Acceptance 2 (`IntentRouterTest`, exact names): `viewMarkdownContent`, `editWantsWrite`, `persistableFlagRead`,
+  `fileSchemeIgnored`, `ownAuthorityIgnored`, `sendTextWithSubject`, `sendBlankTextIsNone`, `sendStreamWinsOverText`,
+  `launchedFromHistoryIsNone`, `mainIsNone` all present and green (plus 2 extra cases:
+  `viewWithWriteGrantFlagAlsoWantsWrite`, `nullIntentIsNone`).
+  Acceptance 3: `SharedNoteTest` — `subjectBecomesH1`, `noDuplicateHeading`, `crlfNormalized`,
+  `singleTrailingNewline`, `baseNameFromFirstLine` all present (plus `noDuplicateHeadingWhenBodyIsJustTheSubject`,
+  `blankSubjectIsIgnored`, `noSubjectFallsBackToSharedNote`); `RecentListTest` — `pushFront`, `dedupe`,
+  `capEvictsOldest`.
+  Acceptance 4: `ExportAllNotesTest` — `keepsFolderStructure`, `skipsHidden`, `emptyFolderEntry`, `bytesIdentical`
+  (a real BOM+CRLF byte sequence round-trips unchanged through the zip), `progressReachesTotal`,
+  `suggestedNameIsIsoDate`.
+  Acceptance 5: `ShareOutTest.buildsChooserForAMarkdownNote` — chooser's `EXTRA_INTENT` is `ACTION_SEND` type
+  `text/markdown`; `clipData.getItemAt(0).uri == EXTRA_STREAM`; `FLAG_GRANT_READ_URI_PERMISSION` set; the file
+  exists under `cache/exports/`; plus `noExtraTextAboveTheBinderLimit` (150k chars → no `EXTRA_TEXT`) and
+  `txtExtensionSharesAsPlainText`.
+  Acceptance 6: `ExternalDocStoreTest` — `readStatDisplayName`, `writeWhenWritableTruncates`,
+  `writeWhenReadOnlyThrowsReadOnly`, `securityExceptionMapsToPermissionLost` (plus `refreshRecomputesWritable`,
+  `refreshThrowsPermissionLostWhenGone`).
+  Acceptance 7: `EditorViewModelTest` — `shareTextCreatesNoteOpensWithIme`, `newIntentFlushesCurrentFirst`
+  (a dirty edit on the currently-open doc is flushed to disk BEFORE the new SEND-text note is created/opened —
+  verified by reading the OLD document's bytes back off the fake store after `handle()` completes),
+  `readOnlyExternalSaveCopyOpensLibraryCopy` (a real `TestDocumentsProvider`-backed External doc, opened read-only,
+  `saveCopyToLibrary()` creates an internal copy with byte-identical content and switches the VM to it,
+  `readOnly` flips to `false`).
+- `make format && make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → **BUILD SUCCESSFUL** (105 tasks: spotless,
+  full JVM suite, Android Lint, release R8 build). Lint SARIF: **0 errors**, 46 results (up from 39 pre-T18; no
+  new error-level findings).
+- Acceptance 1: covered by the `make check` run above.
+- Acceptance 8 (`pm query-activities`, emulator `emulator-5554`, Android 17/API 37, debug app): VIEW
+  `text/markdown` → 1; VIEW `application/octet-stream` with a `.md`-suffixed `content://x.y/d/a.md` → 1; VIEW
+  `application/pdf` → **0**; VIEW BROWSABLE `https://example.com/a.md` → **0**.
+- Acceptance 9: `am start -a SEND -t text/plain --es SUBJECT "Shared idea" --es TEXT "from adb"` (values needed
+  `'"..."'` double-quoting to survive the `adb shell` round-trip with an embedded space — a real, if well-known,
+  adb quoting gotcha, not a bug) opened a NEW note; `run-as ... cat "files/library/Shared idea.md"` →
+  `"# Shared idea\n\nfrom adb\n"` (first line exactly `# Shared idea`); screenshot (`/tmp/t18-share-text.png`)
+  confirms the IME visible with the caret at the end of the inserted text. `run-as ... ls files/library` listed
+  `Shared idea.md` alongside `Welcome.md`.
+- Acceptance 10: pushed `/sdcard/Download/Open me.md` (`"# Open me\n\nhello\n"`); opened the real Files app (`am
+  start -a VIEW -d content://com.android.externalstorage.documents/document/primary%3ADownload -t
+  vnd.android.document/directory`), tapped "Open me.md" → mdwriter opened DIRECTLY (title "Open me", screenshot
+  `/tmp/t18-opened.png` shows `# Open me` / `hello`, no read-only pill). Typed `EDITED` at the end of the body;
+  ~2 s later `adb shell cat "/sdcard/Download/Open me.md"` → `"# Open me\n\nhelloEDITED"` — **edits reached the
+  file directly** (this Files-app "Open with" grant turned out to be read+write for a primary-storage document, so
+  the read-only-pill branch was NOT exercised on-device this round; it IS covered by
+  `readOnlyExternalSaveCopyOpensLibraryCopy` above, which forces read-only via `DocRef.External(..., writable =
+  false)` against a real `TestDocumentsProvider`-backed content Uri).
+- Acceptance 11: Overflow → Share (screenshot `/tmp/t18-sharesheet.png`, "Sharing 1 file — Open me.md", `mdwriter
+  (debug)` itself even shows up as a share target since its own `SEND` intent-filter matches). `adb logcat -c`
+  before, `adb logcat -d | grep -i StrictMode | grep -ci uri` after → **0**. Also manually verified the OTHER two
+  share entry points the same way, both **0** StrictMode hits: the preview share glyph (screenshot
+  `/tmp/t18-preview-share.png`) and the library row's long-press → Share (screenshot `/tmp/t18-rowshare.png`,
+  "Sharing 1 file — Welcome.md", row menu confirmed **Rename · Duplicate · Move… · Share · Delete** in that exact
+  order per 02 §7).
+- Acceptance 12: long-pressed "On this device" → "Export all notes…" (screenshot `/tmp/t18-longpress2.png`) →
+  system `CreateDocument` picker pre-filled `mdwriter-notes-2026-09-27.zip` in Downloads (screenshot
+  `/tmp/t18-createdoc.png`, also incidentally confirming `Open me.md` was now 23 bytes, i.e. `"# Open me\n\nhelloEDITED\n"`)
+  → SAVE → snackbar **"Exported 2 notes"** (screenshot `/tmp/t18-exported3.png`). `adb pull`ed
+  `/sdcard/Download/` and ran `unzip -l` on the real device-produced zip: `mdwriter-notes/Welcome.md` (688 B) and
+  `mdwriter-notes/Shared idea.md` (24 B) both present.
+- No crash anywhere in `logcat -d | grep -i "FATAL EXCEPTION"` across the whole manual session.
+
+**Deviations from the plan:**
+- **`SharedNote` is a `data class` with a `companion object` factory (`SharedNote.compose(...)`), not a same-named
+  `object` wrapping a separate data class** — the task's own file-list wording ("pure `compose(subject, text)` →
+  `SharedNote(baseName, body)`") is satisfied either way; a `companion object` reads as the more idiomatic Kotlin
+  shape for "the type's own smart constructor" and avoids a name clash between an `object SharedNote` and a `data
+  class SharedNote`.
+- **`ExternalDocStore.stat`/`.displayName` use their own null-projection `ContentResolver.query`, never
+  `SafIo.stat`/`SafIo.PROJECTION`** — deliberate, and consistent with the task's own step 5 wording ("query with a
+  null projection... `OpenableColumns.SIZE`, plus `Document.COLUMN_LAST_MODIFIED` if that column exists"): an
+  arbitrary external provider (mail attachment, Drive, a random file-manager app) is not guaranteed to support the
+  `Document.*` column names `SafIo`'s fixed projection asks for, unlike a real `DocumentsProvider` reached through
+  a SAF tree grant. `SafIo.readAll`/`writeWt` ARE reused as-is for the byte-level read/write (those don't depend on
+  a projection at all).
+- **`ExportAllNotes.suggestedName` is a real, independently-callable `companion object` function** (the instance
+  method of the same name just delegates to it) — not in the task's own Reference G sketch verbatim, but needed so
+  `ExportAllNotesTest.suggestedNameIsIsoDate` doesn't need a real `Context`/`Application`/`CoroutineScope` just to
+  test a pure date-formatting one-liner. No behavioural difference for `rememberExportAllNotes`'s own
+  `exporter.suggestedName()` call site.
+- **Real, reproducible Robolectric-only bug found and fixed while writing `ShareOutTest`, not a production bug:**
+  `androidx.core.content.FileProvider` caches a `PathStrategy` per authority string in a private static
+  `HashMap` (`sCache`) that Robolectric never resets between test METHODS sharing the same JVM fork. The first test
+  method in the class established a cached strategy rooted at ITS OWN (Robolectric-generated, per-test) `cacheDir`;
+  the next two methods got a fresh `cacheDir` but `FileProvider` kept resolving files against the FIRST method's
+  now-stale root, throwing `IllegalArgumentException: Failed to find configured root...` for a real, correctly-
+  written file. Root-caused by comparing a minimal scratch Robolectric test (which passed, single method) against
+  the full 3-method class (2 of 3 failed) and finding the failures were exactly "every method after the first".
+  Fixed with a reflective `FileProvider::class.java.getDeclaredField("sCache")...clear()` in `ShareOutTest`'s
+  `@Before` — test-only, `ShareOut`/`FileProvider` production code is untouched and correct (confirmed manually
+  on-device: Acceptance 9-12 all round-tripped real `FileProvider` URIs with zero issues, since a real app process
+  only ever calls `getUriForFile` for ONE authority for its whole lifetime, never racing a stale cached root the
+  way repeated Robolectric test methods do).
+- **Real test-pollution bug found and fixed the same day, in a DIFFERENT class, while running the full suite for
+  the first time:** `ExternalDocStoreTest`'s `securityExceptionMapsToPermissionLost`/`refreshThrowsPermissionLostWhenGone`
+  set the shared, static `TestDocumentsProvider.throwSecurity = true` and had no `@After` to reset it — since
+  Gradle runs test classes alphabetically within a JVM fork and `data.storage.ExternalDocStoreTest` sorts before
+  `data.storage.SafIoTest`/`SafTreeStoreTest` (both T14, neither resets `throwSecurity` in their own `@Before`,
+  since neither had ever needed to before), all 13 of T14's own SAF tests started failing with a leaked
+  `SecurityException` the moment T18's new test class ran first. Fixed with a `@After { TestDocumentsProvider
+  .throwSecurity = false }` in `ExternalDocStoreTest` — a shared-test-fixture hygiene fix, not a change to any
+  T14 production or test code.
+- **`EditorViewModelTest` is now `@RunWith(AndroidJUnit4::class)` (Robolectric)** — it was plain JUnit4 before this
+  task; the new `readOnlyExternalSaveCopyOpensLibraryCopy` case needs a real `ContentResolver` +
+  `TestDocumentsProvider` registration to exercise `ExternalDocStore.stat`/`.read`/`.displayName` against an
+  actual (fake) content provider, exactly like `ExternalDocStoreTest` itself does. Every pre-existing test in the
+  file (all pure Kotlin/coroutines, no direct Android calls beyond what `SavedStateHandle`/`androidx.datastore`
+  already needed, both of which work fine under Robolectric) is unaffected — full class still 0 failures.
+- **`start()`'s process-death restore (`handle["docKey"]`) is checked BEFORE `initial` is ever consulted**, not
+  merely "steps 3-5" as the task's own prose describes it — re-reading the numbered list in the task file itself
+  ("(1) `handle["docKey"]`... (2) first launch... (3)-(5) `openFallbackChain()`... `initial` replaces steps 3-5")
+  confirms this was always the intended ordering, not a deviation; called out here only because it's easy to
+  misread "replaces steps 3-5" as "always wins".
+- No library/plugin versions bumped, no new dependencies added — `androidx.core.content.FileProvider` ships inside
+  `androidx.core:core`, already resolved transitively through the existing `androidx.core:core-ktx` dependency
+  (confirmed: `androidx.core.content.FileProvider` compiled and ran with zero `build.gradle.kts`/
+  `libs.versions.toml` changes). `plans/01-architecture.md` needed no edit — §3/§5/§6.4 already documented every
+  T18 shape exactly as shipped (confirmed by re-reading them before writing any code, not just assumed).
+
+**Ktlint suppressions (file / rule / reason):** none added by this task.
+
+**Known issues / follow-ups:**
+- The read-only-External pill's on-device path (as opposed to its `EditorViewModelTest` coverage) was not
+  exercised this round — see Acceptance 10 above for why (this emulator's Files app grants read+write for any
+  primary-storage document opened via VIEW, so there was no readily-available real read-only external provider to
+  open through the UI without fabricating one). A future task doing a deeper on-device intents pass could force
+  this by installing a small companion test APK that exports a read-only `content://` document, but that felt like
+  overkill for this task's own acceptance bar (which only asks for "EITHER... OR...", both covered).
+- The emulator (`emulator-5554`, Android 17/API 37) was left with scratch state from this task's own on-device
+  verification: `Shared idea.md` (from the SEND-text test) and a renamed/edited `Open me.md` still linked from
+  `/sdcard/Download/` (never deleted — it's the user's own external file, mdwriter never deletes those), plus
+  `mdwriter-notes-2026-09-27.zip` in `/sdcard/Download/` (from the export test). All harmless scratch; no release
+  build installed; `~/.config/mdwriter/` never touched; `/tmp/mdwriter-agent-key/` still holds the shared
+  throwaway signing key.
+
+**Notes for the next task:**
+- **T19 (Settings > Files > "Export all notes…")**: the names it needs are `rememberExportAllNotes(exporter:
+  ExportAllNotes, session: DocumentSession): () -> Unit` (`ui/library/ExportAllNotesAction.kt`) and
+  `ExportAllNotes.status: StateFlow<ExportStatus>` (`data/export/ExportAllNotes.kt`) — call the former from a
+  Settings row's `onClick` exactly the way `LibraryDrawer` already does for its own temporary entry point (long-
+  press "On this device" → "Export all notes…", `ui/library/LibraryContent.kt`'s `LocationRow`/`FolderMenu`-
+  adjacent wiring). T19 does NOT need to remove T18's temporary entry point — the task file says explicitly it
+  "stays after T19 (it is harmless)".
+- **The preview share glyph WAS wired** (`PreviewOverlay(onShare = { editorVm.shareCurrent() })` in
+  `MdWriterRoot.kt`) — T16's own `onShare: (() -> Unit)?` parameter and its "only render the glyph when non-null"
+  behaviour needed no changes at all, exactly as T16's own STATUS notes predicted.
+- **Every "current document" share path funnels through `EditorViewModel.shareCurrent()`** (overflow icon,
+  preview glyph) and every "arbitrary library row" share path funnels through `LibraryViewModel.share(entry)`
+  (library row menu) — both end in the SAME `ShareOut.intentFor(ref)` and both hand the resulting `Intent` back as
+  a one-shot event (`EditorEvent.ShareIntent` / `LibraryEvent.ShareIntent`) for their respective single Compose
+  collector to actually `context.startActivity(...)`. A future task adding yet another "share this doc" entry
+  point should reuse one of these two methods rather than calling `ShareOut` directly from Compose.
+- **`LibraryRepository.storeFor(ref: DocRef.External)` now needs a real `externalStore` to not throw** — the
+  parameter defaults to `null` (throws `StorageException(NotFound)`) purely so pre-T18 test call sites keep
+  compiling unchanged; any NEW test that opens/reads/writes an `External` ref through a `LibraryRepository` it
+  constructs itself must pass `externalStore = <a real or fake ExternalDocStore>` explicitly (see
+  `EditorViewModelTest`'s `setUp()` for the pattern: a real `ExternalDocStore` backed by a Robolectric
+  `TestDocumentsProvider`).
+- **`RoutedIntent`/`IntentOutcome`/`IntentHandler`/`ShareOut` (package `dev.mdwriter.intents`) are the whole
+  intents contract** — T20's own hardening pass (config changes, StrictMode) should extend
+  `MdWriterApp`'s existing `Builder(StrictMode.getVmPolicy())` call, never replace it, per the comment already left
+  there.
+- `EditorViewModel.start(initial, initialShowIme)`'s two new parameters are ONLY ever passed by `startWith` — no
+  other call site needs them, and `start()` (no args) still behaves byte-for-byte like the pre-T18 version for
+  every existing caller/test.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.

@@ -18,6 +18,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.lifecycle.Lifecycle
@@ -25,6 +26,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.mdwriter.R
 import dev.mdwriter.data.document.Snapshot
+import dev.mdwriter.data.library.DocRef
 import dev.mdwriter.data.settings.Settings
 import dev.mdwriter.editor.EditorController
 import dev.mdwriter.editor.FocusModeKind
@@ -70,6 +72,7 @@ fun EditorScreen(
 ) {
     val currentOnMessage by rememberUpdatedState(onMessage)
     val colors = WriterTheme.colors
+    val context = LocalContext.current
     val density = LocalDensity.current
     val scrollThresholdPx = remember(density) { with(density) { WriterDimens.chromeScrollUpThreshold.toPx() } }
 
@@ -120,6 +123,10 @@ fun EditorScreen(
 
                 is EditorEvent.Message -> {
                     currentOnMessage(e.text)
+                }
+
+                is EditorEvent.ShareIntent -> {
+                    context.startActivity(e.intent)
                 }
             }
         }
@@ -211,6 +218,7 @@ fun EditorScreen(
                         onUndo = controller::undo,
                         onRedo = controller::redo,
                         onFind = vm::openFind,
+                        onShare = vm::shareCurrent,
                         onNewNote = onNewNote,
                         onPreview = onPreview,
                         focus =
@@ -241,6 +249,13 @@ fun EditorScreen(
                     onAction = vm::resolveConflict,
                     modifier = Modifier.align(Alignment.TopCenter),
                 )
+            } ?: run {
+                // T18: the read-only-External pill sits in the same top slot as the conflict banner (the banner
+                // wins if both would apply — a conflict can't happen on a read-only doc anyway, but the priority is
+                // spelled out here to be explicit).
+                if (uiState.readOnly && uiState.doc is DocRef.External) {
+                    ReadOnlyPill(onSaveCopy = vm::saveCopyToLibrary, modifier = Modifier.align(Alignment.TopCenter))
+                }
             }
         }
     }

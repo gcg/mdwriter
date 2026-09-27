@@ -8,15 +8,23 @@ import android.view.Menu
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import dev.mdwriter.intents.IntentRouter
+import dev.mdwriter.intents.RoutedIntent
 import dev.mdwriter.ui.root.AppCommand
 import dev.mdwriter.ui.root.AppShortcuts
 import dev.mdwriter.ui.root.MdWriterRoot
 import dev.mdwriter.util.Log
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 
 class MainActivity : ComponentActivity() {
     /** T13: app-level shortcuts (Ctrl+N/O/L), emitted here and collected by `MdWriterRoot`. */
     private val commands = MutableSharedFlow<AppCommand>(extraBufferCapacity = 8)
+
+    /** T18: new intents arriving while this (`singleTask`) activity is already running — SEND/VIEW/EDIT from
+     * another app. `MdWriterRoot` collects this and calls `EditorViewModel.handle` for each one. */
+    private val newIntents = Channel<RoutedIntent>(Channel.BUFFERED)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -26,8 +34,15 @@ class MainActivity : ComponentActivity() {
         // per process, never once per rotation.
         if (BuildConfig.DEBUG) Log.i(LIFE_TAG) { "onCreate" }
         enableEdgeToEdge()
+        val ownAuthority = "$packageName.files"
+        // Parse the LAUNCH intent only on a genuine cold start (never on recreation — rotation, process death
+        // restore, etc. — or the same shared text/file would be re-imported every time). A relaunch from Recents
+        // carries FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY, which IntentRouter.parse also always treats as None.
+        val launch =
+            if (savedInstanceState == null) IntentRouter.parse(intent, ownAuthority) else RoutedIntent.None
+        addOnNewIntentListener { newIntent -> newIntents.trySend(IntentRouter.parse(newIntent, ownAuthority)) }
         setContent {
-            MdWriterRoot((application as MdWriterApp).container, commands)
+            MdWriterRoot((application as MdWriterApp).container, commands, launch, newIntents.receiveAsFlow())
         }
     }
 

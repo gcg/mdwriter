@@ -35,10 +35,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.mdwriter.R
+import dev.mdwriter.data.export.ExportAllNotes
+import dev.mdwriter.data.export.ExportStatus
 import dev.mdwriter.data.library.LibraryEntry
 import dev.mdwriter.data.library.LocationId
 import dev.mdwriter.data.library.LocationState
 import dev.mdwriter.data.settings.SortOrder
+import dev.mdwriter.ui.editor.DocumentSession
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
 import kotlinx.coroutines.delay
@@ -52,9 +55,13 @@ import java.time.Instant
 @Composable
 fun LibraryDrawer(
     vm: LibraryViewModel,
+    exporter: ExportAllNotes,
+    session: DocumentSession,
     modifier: Modifier = Modifier,
 ) {
     val state by vm.uiState.collectAsStateWithLifecycle()
+    val exportStatus by exporter.status.collectAsStateWithLifecycle()
+    val doExport = rememberExportAllNotes(exporter, session)
     var now by remember { mutableStateOf(Instant.now()) }
     LaunchedEffect(Unit) {
         while (true) {
@@ -87,6 +94,9 @@ fun LibraryDrawer(
         state = state,
         now = now,
         modifier = modifier,
+        exportStatus = exportStatus,
+        onShare = vm::share,
+        onExportAllNotes = doExport,
         onSearchToggle = {
             if ((state as? LibraryUiState.Content)?.searching ==
                 true
@@ -168,6 +178,9 @@ fun LibraryContent(
     onMove: (LibraryEntry) -> Unit,
     onDelete: (LibraryEntry) -> Unit,
     modifier: Modifier = Modifier,
+    onShare: (LibraryEntry) -> Unit = {},
+    onExportAllNotes: () -> Unit = {},
+    exportStatus: ExportStatus = ExportStatus.Idle,
 ) {
     val colors = WriterTheme.colors
     Column(modifier.fillMaxSize().background(colors.surface)) {
@@ -180,6 +193,7 @@ fun LibraryContent(
             onNewNote = onNewNote,
             newNoteEnabled = content?.currentFolderCaps?.createChildren != false,
         )
+        ExportProgress(exportStatus, Modifier.fillMaxWidth())
         if (content == null) return@Column
         val currentLocation =
             content.crumbs
@@ -199,6 +213,7 @@ fun LibraryContent(
                         LocationRow(
                             selected = currentLocation == LocationId.Internal,
                             onClick = { onLocationClick(LocationId.Internal) },
+                            onExportAllNotes = onExportAllNotes,
                         )
                     }
 
@@ -243,6 +258,12 @@ fun LibraryContent(
                         onDuplicate = { onDuplicate(item.entry) },
                         onMove = { onMove(item.entry) },
                         onDelete = { onDelete(item.entry) },
+                        rowMenuExtras = { onClose ->
+                            ShareMenuItem(onClick = {
+                                onClose()
+                                onShare(item.entry)
+                            })
+                        },
                     )
                 }
             }
@@ -339,6 +360,17 @@ private fun IconButtonPlain(
             modifier = Modifier.size(WriterDimens.icon),
         )
     }
+}
+
+/** T18: the "Share" entry [RowMenu] inserts between Move… and Delete via `rowMenuExtras`. */
+@Composable
+private fun ShareMenuItem(onClick: () -> Unit) {
+    val colors = WriterTheme.colors
+    DropdownMenuItem(
+        text = { Text(stringResource(R.string.overflow_share), color = colors.text) },
+        leadingIcon = { Icon(painterResource(R.drawable.ic_share), null, tint = colors.text) },
+        onClick = onClick,
+    )
 }
 
 @Composable

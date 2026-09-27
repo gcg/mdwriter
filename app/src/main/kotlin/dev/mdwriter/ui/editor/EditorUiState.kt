@@ -1,5 +1,6 @@
 package dev.mdwriter.ui.editor
 
+import android.content.Intent
 import dev.mdwriter.data.document.SaveState
 import dev.mdwriter.data.library.DocRef
 import dev.mdwriter.data.storage.FileStat
@@ -66,5 +67,11 @@ sealed interface EditorEvent {
 
     data class Message(
         val text: String,
+    ) : EditorEvent
+
+    /** T18: a share-out chooser intent, ready to hand to `Context.startActivity` (never built/started inside the
+     * ViewModel itself — 01 §5, no ViewModel holds a Context). */
+    data class ShareIntent(
+        val intent: Intent,
     ) : EditorEvent
 }

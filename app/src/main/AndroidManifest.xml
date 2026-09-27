@@ -30,6 +30,53 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+              T18: open .md/.txt files from other apps. Deliberately NO android:BROWSABLE category anywhere in this
+              file (hard rule 1 / platform §3.2) — mdwriter must never appear as a handler for a web link.
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <!-- Fallback: sender says octet-stream or */*; pathSuffix matching needs scheme+host (platform §3.1). -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data
+                    android:scheme="content"
+                    android:host="*"
+                    android:mimeType="*/*" />
+                <data android:pathSuffix=".md" />
+                <data android:pathSuffix=".markdown" />
+                <data android:pathSuffix=".mdown" />
+                <data android:pathSuffix=".mkd" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+                <data android:mimeType="text/markdown" />
+                <data android:mimeType="text/x-markdown" />
+            </intent-filter>
         </activity>
+
+        <!-- T18: share-out (ShareOut copies the shared file under cacheDir/exports/ and grants a content:// Uri
+             to it). Authority built from applicationId at build time — matches packageName at runtime for both
+             the release app (dev.mdwriter) and the debug app (dev.mdwriter.debug, applicationIdSuffix). -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>

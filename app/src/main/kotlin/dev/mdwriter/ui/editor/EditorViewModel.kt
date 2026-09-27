@@ -31,6 +31,7 @@ import dev.mdwriter.data.library.toRef
 import dev.mdwriter.data.settings.Position
 import dev.mdwriter.data.settings.PositionStore
 import dev.mdwriter.data.settings.SettingsRepository
+import dev.mdwriter.data.storage.ExternalDocStore
 import dev.mdwriter.data.storage.FileStat
 import dev.mdwriter.data.storage.NoteFiles
 import dev.mdwriter.data.storage.RecoveryStore
@@ -42,6 +43,10 @@ import dev.mdwriter.data.storage.TextFormat
 import dev.mdwriter.data.storage.userMessage
 import dev.mdwriter.editor.FocusModeKind
 import dev.mdwriter.editor.InstallRequest
+import dev.mdwriter.intents.IntentHandler
+import dev.mdwriter.intents.IntentOutcome
+import dev.mdwriter.intents.RoutedIntent
+import dev.mdwriter.intents.ShareOut
 import dev.mdwriter.ui.preview.PreviewPage
 import dev.mdwriter.ui.preview.PreviewRenderer
 import dev.mdwriter.ui.preview.PreviewTheme
@@ -107,6 +112,9 @@ class EditorViewModel(
     private val handle: SavedStateHandle,
     private val clock: () -> Long,
     private val previewRenderer: PreviewRenderer,
+    private val intentHandler: IntentHandler,
+    private val externalStore: ExternalDocStore,
+    private val shareOut: ShareOut,
 ) : ViewModel(),
     AutosaveTarget,
     DocumentSession {
@@ -216,36 +224,103 @@ class EditorViewModel(
 
     // ---- start-up ---------------------------------------------------------------------------------------------
 
-    /** Idempotent. Tries, in order: (1) process-death restore from [handle]; (2) first launch -> create+open
-     * [WelcomeNote]; (3) [openFallbackChain] (last open doc / newest / a brand new note). */
-    fun start() {
+    /**
+     * Idempotent. Tries, in order: (1) process-death restore from [handle] (an `x:` (External) key is re-checked
+     * via [ExternalDocStore.refresh] first — a lost grant falls through to the next rule with a message, T18); (2)
+     * first launch -> create [WelcomeNote] (opened only when [initial] is null — T18: a launch intent still gets a
+     * fresh Welcome note waiting in the library, it just isn't the one that opens); (3) [initial] if non-null (T18:
+     * replaces steps 3-5 below); (4)-(6) [openFallbackChain] (last open doc / newest / a brand new note).
+     */
+    fun start(
+        initial: DocRef? = null,
+        initialShowIme: Boolean = false,
+    ) {
         if (started) return
         started = true
         viewModelScope.launch {
             val savedRef = handle.get<String>(KEY_DOC_KEY)?.let { DocKey(it).toRef() }
             if (savedRef != null) {
-                installAndOpen(
-                    savedRef,
-                    showIme = false,
-                    selection = handle.get<Int>(KEY_SEL_START) ?: 0,
-                    scrollY = handle.get<Int>(KEY_SCROLL_Y) ?: 0,
-                )
+                val effectiveRef = if (savedRef is DocRef.External) restoreExternal(savedRef) else savedRef
+                if (effectiveRef != null) {
+                    installAndOpen(
+                        effectiveRef,
+                        showIme = false,
+                        selection = handle.get<Int>(KEY_SEL_START) ?: 0,
+                        scrollY = handle.get<Int>(KEY_SCROLL_Y) ?: 0,
+                    )
+                    return@launch
+                }
+            }
+            val isFirstLaunch = !settings.current().welcomeCreated && library.newestDoc() == null
+            if (isFirstLaunch) createWelcomeNote(openIt = initial == null)
+            if (initial != null) {
+                installAndOpen(initial, showIme = initialShowIme)
                 return@launch
             }
-            if (!settings.current().welcomeCreated && library.newestDoc() == null) {
-                createWelcomeNote()
-                return@launch
-            }
-            openFallbackChain()
+            if (!isFirstLaunch) openFallbackChain()
         }
     }
 
-    private suspend fun createWelcomeNote() {
+    /** T18: `handle["docKey"]`/`Settings.lastOpenDoc` restore of an `External` ref must recompute `writable` (the
+     * grant may have changed) and confirm the document is still reachable at all — a failure here is NOT a hard
+     * error, just a fall-through to the next startup rule, with a message explaining why. */
+    private suspend fun restoreExternal(ref: DocRef.External): DocRef.External? =
+        try {
+            externalStore.refresh(ref)
+        } catch (_: StorageException) {
+            val name = runCatching { externalStore.displayName(ref) }.getOrDefault(ref.uri.substringAfterLast('/'))
+            _events.send(EditorEvent.Message("Access to '$name' ended — open it again from the other app"))
+            null
+        }
+
+    private suspend fun createWelcomeNote(openIt: Boolean) {
         val store = library.storeFor(LocationId.Internal)
         val ref = store.create(FolderRef.INTERNAL_ROOT, WelcomeNote.FILE_NAME)
         store.write(ref, TextCodec.encode(WelcomeNote.TEXT, TextFormat.DEFAULT))
         settings.update { it.copy(welcomeCreated = true) }
-        installAndOpen(ref, showIme = false, selection = WelcomeNote.TEXT.length)
+        if (openIt) installAndOpen(ref, showIme = false, selection = WelcomeNote.TEXT.length)
+    }
+
+    /** T18: resolves a launch intent (`MainActivity`'s `intent`, parsed by `IntentRouter` before this VM ever sees
+     * it) and starts accordingly — an [IntentOutcome.Open] becomes the [start]'s `initial` document; a
+     * [IntentOutcome.Message] still starts normally (the usual welcome/last-doc/newest chain) plus the message. */
+    fun startWith(launch: RoutedIntent) {
+        viewModelScope.launch {
+            when (val outcome = intentHandler.resolve(launch)) {
+                is IntentOutcome.Open -> {
+                    start(outcome.ref, outcome.showIme)
+                }
+
+                is IntentOutcome.Message -> {
+                    start()
+                    _events.send(EditorEvent.Message(outcome.text))
+                }
+
+                IntentOutcome.Nothing -> {
+                    start()
+                }
+            }
+        }
+    }
+
+    /** T18: a NEW intent while already running (`MainActivity`'s `addOnNewIntentListener`). Flushes the CURRENT
+     * document first (01 §6.3) — resolving may itself create a file (e.g. a shared-text outcome creates a new
+     * note), so the flush must happen before `resolve`, not just before `open`. */
+    fun handle(r: RoutedIntent) {
+        viewModelScope.launch {
+            flush()
+            when (val outcome = intentHandler.resolve(r)) {
+                is IntentOutcome.Open -> {
+                    open(outcome.ref, outcome.showIme, leaveCurrent = true)
+                }
+
+                is IntentOutcome.Message -> {
+                    _events.send(EditorEvent.Message(outcome.text))
+                }
+
+                IntentOutcome.Nothing -> {}
+            }
+        }
     }
 
     /** Steps 3-5 of [start] ("last open doc at its remembered position" / "newest doc" / "a brand new note"); also
@@ -427,6 +502,43 @@ class EditorViewModel(
                 }
 
                 else -> {}
+            }
+        }
+    }
+
+    // ---- T18: read-only External pill / share out --------------------------------------------------------------
+
+    /** [ReadOnlyPill]'s "Save a copy to Library": copies the current buffer into a new, unique internal note (same
+     * base name/extension), seeds its remembered caret position from the live one so the copy opens at the SAME
+     * caret, then opens it. */
+    fun saveCopyToLibrary() {
+        viewModelScope.launch {
+            val sess = session ?: return@launch
+            val snap = binding?.snapshot() ?: lastSnapshot ?: return@launch
+            val base = NoteFiles.baseName(sess.displayName)
+            val ext = NoteFiles.extensionOf(sess.displayName).ifEmpty { "md" }
+            val copy = library.createUnique(library.rootOf(LocationId.Internal), base, ext)
+            library.storeFor(copy).write(copy, TextCodec.encode(snap.text, sess.format))
+            val caret = (binding?.caret() ?: snap.text.length).coerceIn(0, snap.text.length)
+            val scrollY = binding?.scrollY() ?: 0
+            positions.put(copy.key(), Position(caret, scrollY))
+            open(copy, showIme = false, leaveCurrent = false)
+            _events.send(EditorEvent.Message("Saved a copy to Library"))
+        }
+    }
+
+    /** Overflow share icon / preview share glyph / (through [DocumentSession] indirectly) any future "share the
+     * current document" entry point: flushes first, builds the chooser intent, and hands it back as one-shot
+     * [EditorEvent.ShareIntent] — this VM never touches a `Context` itself (01 §5). */
+    fun shareCurrent() {
+        viewModelScope.launch {
+            val doc = _current.value ?: return@launch
+            try {
+                flush()
+                val intent = shareOut.intentFor(doc)
+                _events.send(EditorEvent.ShareIntent(intent))
+            } catch (e: StorageException) {
+                _events.send(EditorEvent.Message("Couldn't share: ${e.error.userMessage()}"))
             }
         }
     }
@@ -711,6 +823,9 @@ class EditorViewModel(
                         handle = createSavedStateHandle(),
                         clock = System::currentTimeMillis,
                         previewRenderer = PreviewRenderer(container.dispatchers.default),
+                        intentHandler = container.intentHandler,
+                        externalStore = container.externalStore,
+                        shareOut = container.shareOut,
                     )
                 }
             }

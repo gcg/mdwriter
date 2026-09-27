@@ -53,35 +53,72 @@ fun Modifier.clickableRow(onClick: () -> Unit): Modifier {
     return clickable(interactionSource = interaction, indication = ripple(), onClick = onClick)
 }
 
-/** 02 §7 "Locations": `phone_android` 20 dp + label, bold when selected. Only Internal until T14. */
+/**
+ * 02 §7 "Locations": `phone_android` 20 dp + label, bold when selected. Only Internal until T14.
+ *
+ * [onExportAllNotes], when non-null, is T18's temporary "Export all notes…" entry point (until T19 adds the real
+ * Settings row): long-pressing this row opens a one-item menu, the same component T14's [TreeLocationRow] uses for
+ * its own "Stop using this folder" menu.
+ */
 @Composable
 fun LocationRow(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    onExportAllNotes: (() -> Unit)? = null,
 ) {
     val colors = WriterTheme.colors
-    Row(
-        modifier
-            .fillMaxWidth()
-            .height(WriterDimens.locationRowHeight)
-            .clickableRow(onClick)
-            .padding(horizontal = WriterDimens.rowPaddingHorizontal),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_phone_android),
-            contentDescription = null,
-            tint = colors.textSecondary,
-            modifier = Modifier.size(WriterDimens.folderIcon),
-        )
-        Text(
-            stringResource(R.string.library_on_this_device),
-            color = colors.text,
-            style = WriterTheme.typography.rowTitle,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier.padding(start = 12.dp),
-        )
+    val haptics = LocalHapticFeedback.current
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .height(WriterDimens.locationRowHeight)
+                .combinedClickable(
+                    onClick = onClick,
+                    onLongClick =
+                        onExportAllNotes?.let {
+                            {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                menuOpen = true
+                            }
+                        },
+                ).padding(horizontal = WriterDimens.rowPaddingHorizontal),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                painter = painterResource(R.drawable.ic_phone_android),
+                contentDescription = null,
+                tint = colors.textSecondary,
+                modifier = Modifier.size(WriterDimens.folderIcon),
+            )
+            Text(
+                stringResource(R.string.library_on_this_device),
+                color = colors.text,
+                style = WriterTheme.typography.rowTitle,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                modifier = Modifier.padding(start = 12.dp),
+            )
+        }
+        if (onExportAllNotes != null) {
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false },
+                shape = RoundedCornerShape(12.dp),
+                containerColor = colors.surface,
+                tonalElevation = 0.dp,
+                shadowElevation = 0.dp,
+            ) {
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.library_export_all_notes), color = colors.text) },
+                    onClick = {
+                        menuOpen = false
+                        onExportAllNotes()
+                    },
+                )
+            }
+        }
     }
 }
 

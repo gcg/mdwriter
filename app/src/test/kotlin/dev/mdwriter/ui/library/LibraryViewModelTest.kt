@@ -3,12 +3,14 @@ package dev.mdwriter.ui.library
 import androidx.datastore.preferences.core.PreferenceDataStoreFactory
 import app.cash.turbine.test
 import com.google.common.truth.Truth.assertThat
+import dev.mdwriter.data.export.ExportAllNotes
 import dev.mdwriter.data.library.DocRef
 import dev.mdwriter.data.library.LibraryRepository
 import dev.mdwriter.data.library.key
 import dev.mdwriter.data.settings.PositionStore
 import dev.mdwriter.data.settings.SettingsRepository
 import dev.mdwriter.data.settings.SortOrder
+import dev.mdwriter.intents.ShareOut
 import dev.mdwriter.testing.FakeDocumentSession
 import dev.mdwriter.testing.FakeDocumentStore
 import kotlinx.coroutines.CoroutineScope
@@ -71,7 +73,21 @@ class LibraryViewModelTest {
         // Shares testDispatcher's scheduler so `commitPendingNow()`'s `appScope.launch` is deterministically driven
         // by `runCurrent()`/`advanceTimeBy` (same trap T11's STATUS documents for AutosaveCoordinator/appScope).
         appScope = CoroutineScope(Job() + testDispatcher)
-        vm = LibraryViewModel(library, settingsRepo, positionsRepo, session, appScope, testDispatcher)
+        // Neither share() nor start() is exercised by this test class — plain construction only (no Robolectric
+        // needed here, unlike EditorViewModelTest's T18 additions).
+        val shareOut = ShareOut(android.app.Application(), library, testDispatcher)
+        val exporter = ExportAllNotes(android.app.Application(), tmp.newFolder("libraryRoot"), appScope, testDispatcher)
+        vm =
+            LibraryViewModel(
+                library,
+                settingsRepo,
+                positionsRepo,
+                session,
+                appScope,
+                testDispatcher,
+                shareOut,
+                exporter,
+            )
     }
 
     @After

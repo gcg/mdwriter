@@ -54,6 +54,7 @@ import dev.mdwriter.R
 import dev.mdwriter.data.settings.Settings
 import dev.mdwriter.editor.EditorController
 import dev.mdwriter.editor.spans.EditorStyle
+import dev.mdwriter.intents.RoutedIntent
 import dev.mdwriter.ui.editor.EditorScreen
 import dev.mdwriter.ui.editor.EditorViewModel
 import dev.mdwriter.ui.gesture.SwipeDir
@@ -74,6 +75,7 @@ import dev.mdwriter.ui.theme.WidthClass
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
 import dev.mdwriter.ui.theme.hairline
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
@@ -97,6 +99,8 @@ import java.io.File
 fun MdWriterRoot(
     container: AppContainer,
     commands: SharedFlow<AppCommand>,
+    launch: RoutedIntent,
+    newIntents: Flow<RoutedIntent>,
     modifier: Modifier = Modifier,
 ) {
     val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = Settings())
@@ -111,6 +115,8 @@ fun MdWriterRoot(
                     session = editorVm,
                     appScope = container.applicationScope,
                     io = container.dispatchers.io,
+                    shareOut = container.shareOut,
+                    exporter = container.exporter,
                 )
             }
 
@@ -240,7 +246,10 @@ fun MdWriterRoot(
 
         val armedSelection = remember { IntArray(2) }
 
-        LaunchedEffect(editorVm) { editorVm.start() }
+        LaunchedEffect(editorVm) { editorVm.startWith(launch) }
+        // T18: new intents (SEND / VIEW / EDIT) while the activity is already running (singleTask + `MainActivity`'s
+        // `addOnNewIntentListener`) — `handle` flushes the current document BEFORE resolving the new one (01 §6.3).
+        LaunchedEffect(editorVm) { newIntents.collect(editorVm::handle) }
 
         LaunchedEffect(commands) {
             commands.collect { cmd ->
@@ -305,6 +314,10 @@ fun MdWriterRoot(
                     is LibraryEvent.Message -> {
                         scope.launch { libraryHostState.showSnackbar(event.text) }
                     }
+
+                    is LibraryEvent.ShareIntent -> {
+                        context.startActivity(event.intent)
+                    }
                 }
             }
         }
@@ -355,7 +368,12 @@ fun MdWriterRoot(
                 if (expanded) {
                     Row(Modifier.fillMaxSize()) {
                         if (paneVisible) {
-                            LibraryPane(libraryVm, Modifier.width(WriterDimens.permanentPaneWidth).fillMaxHeight())
+                            LibraryPane(
+                                libraryVm,
+                                container.exporter,
+                                editorVm,
+                                Modifier.width(WriterDimens.permanentPaneWidth).fillMaxHeight(),
+                            )
                             VerticalDivider(thickness = hairline(), color = colors.divider)
                         }
                         Box(Modifier.weight(1f)) { editor() }
@@ -374,7 +392,7 @@ fun MdWriterRoot(
                                 drawerContentColor = colors.text,
                                 drawerTonalElevation = 0.dp,
                             ) {
-                                LibraryDrawer(libraryVm)
+                                LibraryDrawer(libraryVm, container.exporter, editorVm)
                                 // Search-clear / folder-up back handlers (01 §6.4 / §H) — composed AFTER
                                 // LibraryDrawer's own children (i.e. after ModalDrawerSheet's own predictive-back
                                 // handler), enabled only while the modal drawer is open (never in pane mode).
@@ -421,7 +439,7 @@ fun MdWriterRoot(
             holder = previewHolder,
             currentDoc = currentDoc,
             onClose = ::closePreview,
-            onShare = null, // T18 supplies this
+            onShare = { editorVm.shareCurrent() },
         )
 
         BackHandler(enabled = ui.findOpen) { closeFindBar() }

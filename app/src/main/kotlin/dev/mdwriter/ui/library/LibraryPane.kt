@@ -3,6 +3,8 @@ package dev.mdwriter.ui.library
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import dev.mdwriter.data.export.ExportAllNotes
+import dev.mdwriter.ui.editor.DocumentSession
 
 /**
  * The permanent library pane shown on windows >= 840 dp (02 §7, T13): the exact same content as the modal
@@ -15,7 +17,9 @@ import androidx.compose.ui.Modifier
 @Composable
 fun LibraryPane(
     vm: LibraryViewModel,
+    exporter: ExportAllNotes,
+    session: DocumentSession,
     modifier: Modifier = Modifier,
 ) {
-    LibraryDrawer(vm, modifier.fillMaxHeight())
+    LibraryDrawer(vm, exporter, session, modifier.fillMaxHeight())
 }
