@@ -8,7 +8,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
-import dev.mdwriter.MainActivity
+import dev.mdwriter.debug.EditorPerfActivity
 import org.junit.Test
 import org.junit.runner.RunWith
 import kotlin.math.roundToInt
@@ -17,6 +17,14 @@ import kotlin.math.roundToInt
  * Proves the scrolling architecture (01 §4.4, Acceptance 4): the EditText's own `scrollY` never moves — only
  * [EditorScrollView] scrolls — and the 50 % end-of-document scroll room is real EditText padding derived from
  * the window height.
+ *
+ * Launches the debug-only [EditorPerfActivity] harness (`sample`/`perfEdits` intent extras), not `MainActivity`:
+ * `MainActivity` stopped reading a `sample` extra once T11 replaced the old `EditorDemo` composable with the real
+ * `MdWriterRoot`/`DocumentSession` flow, which always opens whichever document the session resolves (welcome
+ * note / last-open / a new note) — never an arbitrary 100k-char sample. `EditorPerfActivity` is this codebase's
+ * established debug-only harness for installing an exact sample document directly on a real
+ * [dev.mdwriter.editor.EditorController] (already used by `EditorTestHost`/`SmartEditingTest`/`UndoRedoTest`
+ * etc.); `perfEdits = 0` disables its scripted-edit loop so it only installs and sits idle.
  */
 @RunWith(AndroidJUnit4::class)
 class EditorScrollDeviceTest {
@@ -45,11 +53,12 @@ class EditorScrollDeviceTest {
     @Test
     fun scrollingKeepsPaddingBandsDrawnAndEditTextNeverSelfScrolls() {
         val intent =
-            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java).apply {
+            Intent(ApplicationProvider.getApplicationContext(), EditorPerfActivity::class.java).apply {
                 putExtra("sample", "100k")
+                putExtra("perfEdits", 0)
             }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+        ActivityScenario.launch<EditorPerfActivity>(intent).use { scenario ->
             var scrollView: EditorScrollView? = null
             var windowHeight = 0
             waitUntil {

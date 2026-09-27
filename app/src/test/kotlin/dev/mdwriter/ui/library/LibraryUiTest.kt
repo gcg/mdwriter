@@ -93,6 +93,7 @@ class LibraryUiTest {
                 searching = false,
                 query = "",
                 openDocKey = null,
+                atRoot = true,
             )
         composeRule.setContent {
             MdWriterTheme {

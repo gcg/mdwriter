@@ -16,11 +16,22 @@ import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.ViewCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import dev.mdwriter.R
 import dev.mdwriter.editor.EditorController
+import dev.mdwriter.ui.gesture.SwipeDir
+import dev.mdwriter.ui.gesture.editorSwipeNav
 import dev.mdwriter.ui.theme.LocalWriterColors
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.toolbar.FormatToolbarOverlay
@@ -28,14 +39,32 @@ import dev.mdwriter.ui.toolbar.FormatToolbarOverlay
 /**
  * The Compose host: [EditorController.scrollView] wrapped in the IME/cutout/nav-bar insets it needs (never the
  * EditText itself — rule 2 / factcheck C9/A16), plus the status-bar protection strip (02 §5) so scrolled text
- * never collides with system icons.
+ * never collides with system icons. T13 adds the swipe-navigation gesture, the top-strip tap-to-show-chrome
+ * gesture, and the "Open library" accessibility custom action — all layered on the SAME Box that hosts the
+ * `AndroidView`, never touching the EditText's padding/insets (rule 2).
  */
 @Composable
 fun EditorHost(
     controller: EditorController,
     modifier: Modifier = Modifier,
+    swipeEnabled: () -> Boolean = { false },
+    swipeAccepts: (SwipeDir) -> Boolean = { true },
+    onSwipeArmedDown: () -> Unit = {},
+    onSwipe: (SwipeDir) -> Unit = {},
+    onTopTap: () -> Unit = {},
+    onOpenLibrary: () -> Unit = {},
 ) {
     val colors = LocalWriterColors.current
+    val currentOnOpenLibrary by rememberUpdatedState(onOpenLibrary)
+    val label = stringResource(R.string.library_open_library)
+    DisposableEffect(controller, label) {
+        val id =
+            ViewCompat.addAccessibilityAction(controller.editText, label) { _, _ ->
+                currentOnOpenLibrary()
+                true
+            }
+        onDispose { ViewCompat.removeAccessibilityAction(controller.editText, id) }
+    }
     Box(
         modifier
             .fillMaxSize()
@@ -47,7 +76,15 @@ fun EditorHost(
     ) {
         // No insets/offset between this Box and EditorSurface's own AndroidView (T09): SelectionState.anchor is
         // published in EditorScrollView viewport coords, so their top-left corners must stay aligned.
-        EditorSurface(controller, Modifier.fillMaxSize())
+        EditorSurface(
+            controller,
+            Modifier.fillMaxSize(),
+            swipeEnabled = swipeEnabled,
+            swipeAccepts = swipeAccepts,
+            onSwipeArmedDown = onSwipeArmedDown,
+            onSwipe = onSwipe,
+            onTopTap = onTopTap,
+        )
         Box(
             Modifier
                 .fillMaxWidth()
@@ -58,18 +95,46 @@ fun EditorHost(
 }
 
 /**
- * [EditorController.scrollView] plus the selection pill overlay (T09), sharing one coordinate space: the pill's
- * `Box` and the `AndroidView` both fill this same, unpadded parent, so [dev.mdwriter.editor.SelectionState.anchor]
- * (published in `EditorScrollView` viewport coords) lines up with the overlay with no extra math. The overlay is
- * the LAST child (drawn above the `AndroidView`) — T13's chrome glyphs will later share this same layering.
+ * [EditorController.scrollView] plus the selection pill overlay (T09) and (T13) the swipe-navigation +
+ * top-tap-to-show-chrome gestures, sharing one coordinate space: the pill's `Box` and the `AndroidView` both fill
+ * this same, unpadded parent, so [dev.mdwriter.editor.SelectionState.anchor] (published in `EditorScrollView`
+ * viewport coords) lines up with the overlay with no extra math. The overlay is the LAST child (drawn above the
+ * `AndroidView`) — the chrome glyphs (`EditorChrome`, composed by `EditorScreen` above this) share this same
+ * layering.
  */
 @Composable
 internal fun EditorSurface(
     controller: EditorController,
     modifier: Modifier = Modifier,
+    swipeEnabled: () -> Boolean = { false },
+    swipeAccepts: (SwipeDir) -> Boolean = { true },
+    onSwipeArmedDown: () -> Unit = {},
+    onSwipe: (SwipeDir) -> Unit = {},
+    onTopTap: () -> Unit = {},
 ) {
     val selection by controller.selection.collectAsStateWithLifecycle()
-    Box(modifier) {
+    val density = LocalDensity.current
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val statusBarInsets = WindowInsets.statusBars
+    val currentEnabled by rememberUpdatedState(swipeEnabled)
+    val currentAccepts by rememberUpdatedState(swipeAccepts)
+    val currentArmedDown by rememberUpdatedState(onSwipeArmedDown)
+    val currentSwipe by rememberUpdatedState(onSwipe)
+    val currentTopTap by rememberUpdatedState(onTopTap)
+    val topPx =
+        remember(density, statusBarInsets) {
+            { with(density) { WriterDimens.chromeTapZone.toPx() + statusBarInsets.getTop(density) } }
+        }
+    Box(
+        modifier
+            .editorSwipeNav(
+                enabled = { currentEnabled() },
+                accepts = { currentAccepts(it) },
+                onArmedDown = { currentArmedDown() },
+                onSwipe = { currentSwipe(it) },
+                rtl = rtl,
+            ).observeTopTap(topPx = topPx, onTap = { currentTopTap() }),
+    ) {
         AndroidView(
             factory = {
                 (controller.scrollView.parent as? ViewGroup)?.removeView(controller.scrollView)

@@ -120,9 +120,14 @@ class EditorViewModel(
     /** [DocumentSession.current]: the currently-open document, kept in sync on every install/rename/move. */
     override val current: StateFlow<DocRef?> = _current.asStateFlow()
 
+    /** T13: the two floating chrome glyphs' fade state machine — driven by `EditorScreen`'s edit/IME/scroll/tap
+     * signals, combined into [uiState.chromeVisible][EditorUiState.chromeVisible]. */
+    val chrome = ChromeVisibility(viewModelScope)
+
     val uiState: StateFlow<EditorUiState> =
-        combine(uiInternal, autosave.state) { u, s -> u.copy(save = s) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EditorUiState.INITIAL)
+        combine(uiInternal, autosave.state, chrome.visible) { u, s, chromeVisible ->
+            u.copy(save = s, chromeVisible = chromeVisible)
+        }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EditorUiState.INITIAL)
 
     private val _events = Channel<EditorEvent>(Channel.BUFFERED)
     val events: Flow<EditorEvent> = _events.receiveAsFlow()
@@ -309,6 +314,19 @@ class EditorViewModel(
             }
             settings.update { if (it.lastOpenDoc == oldKey) it.copy(lastOpenDoc = newKey) else it }
         }
+    }
+
+    /** T13: mirrors `MdWriterRoot`'s `drawerState` (modal/compact mode only — the permanent pane in expanded mode
+     * is tracked by `accepts(dir)` instead, never this flag) into [EditorUiState.drawerOpen], which gates the
+     * swipe-nav `enabled()` check. */
+    fun setDrawerOpen(open: Boolean) {
+        uiInternal.update { it.copy(drawerOpen = open) }
+    }
+
+    /** T17 extends this; for T13 it only ever clears the (always-false) [EditorUiState.findOpen] flag, part of the
+     * back-ordering contract (01 §6.4 / §H): `BackHandler(enabled = ui.findOpen) { editorVm.closeFind() }`. */
+    fun closeFind() {
+        uiInternal.update { it.copy(findOpen = false) }
     }
 
     /** Called by `MdWriterRoot` right before the drawer opens: flush, then auto-name the current doc (never

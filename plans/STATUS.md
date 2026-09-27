@@ -2089,3 +2089,307 @@ callsite-flexibility gap, not just a lint quirk to suppress.
   T12 does (`SettingsRepository.settings`/`.update{}`); no new plumbing needed there either.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T13 — Swipe navigation, fading chrome, overflow menu, back ordering, wide-screen pane — DONE — 2026-09-27
+**What changed:**
+- `ui/gesture/SwipeTuning.kt` (new): `object SwipeTuning` — `COMMIT_DP=56f`, `RATIO=2.5f`, `MAX_COMMIT_MS=600L`,
+  `FLICK_DP_PER_S=1000f`, `MIN_FLICK_DP=24f` (the task's own reference starting points — see Verification for why
+  none needed changing after on-device tuning).
+- `ui/gesture/SwipeClassifier.kt` (new): `SwipeDir`, `SwipeDecision`, pure `SwipeClassifier` copied verbatim from
+  the task's Reference §A.
+- `ui/gesture/EditorSwipeNav.kt` (new): `Modifier.editorSwipeNav(enabled, accepts, onArmedDown, onSwipe, rtl)` —
+  detects in `PointerEventPass.Initial`, consumes only on commit. Deviation from the Reference §B sketch: `rtl` is
+  a plain `Boolean` parameter (default `false`), not read via `LocalLayoutDirection.current` *inside*
+  `pointerInput` — `PointerInputScope` has no `layoutDirection` accessor (only `Density`); the caller
+  (`EditorSurface`) reads it once via composition and passes it in. This also sidesteps ktlint's
+  `compose:modifier-composed-check` (a `composed {}` wrapper, tried first, is flagged as discouraged).
+- `ui/editor/ChromeVisibility.kt` (new): pure state machine per Reference §D, copied essentially verbatim.
+- `ui/editor/EditorChrome.kt` (new): `EditorChrome(...)` (library + overflow glyphs in an `AnimatedVisibility`,
+  stats slot outside it) and `Modifier.observeTopTap(topPx, onTap)` (never consumes).
+- `ui/editor/OverflowMenu.kt` (new): `OverflowToggle`, `OverflowChoice`, `OverflowActions`, `OverflowMenu(...)` —
+  icon row (Undo/Redo/[Find]/[Share]) → New note → [Preview] → [Focus ▸ + radio sub-rows] → [Typewriter] →
+  [Word count] → [Settings], each item dismisses the menu before running its action.
+- `ui/root/AppCommands.kt` (new): `AppCommand { NewNote, ToggleLibrary }`, `object AppShortcuts` (pure key map,
+  copied from Reference §I).
+- `ui/library/LibraryPane.kt` (new): thin `LibraryPane(vm, modifier)` wrapper around T12's `LibraryDrawer` (same
+  content, just given a fixed-width `modifier` instead of a `ModalDrawerSheet`) — no drawer-specific logic
+  duplicated. `@Suppress("ktlint:compose:vm-forwarding-check")`: this two-hop `LibraryPane -> LibraryDrawer` VM
+  forward is intentional (deliberately thin) — see Ktlint suppressions.
+- `data/library/LibraryUiState.kt` (modified): `LibraryUiState.Content` gained `atRoot: Boolean` (crumb-list size
+  <= 1) — needed by the back-ordering contract's folder-up gate (`§H`); `LibraryUiTest`'s manual `Content(...)`
+  construction updated with the new field.
+- `ui/library/LibraryViewModel.kt` (modified): `navigateUp()` (= `up()`) and `clearSearch()` (= `closeSearch()`) —
+  aliases the back-ordering contract names to T12's existing methods (T12 already had `up()`/`closeSearch()`,
+  matching step 1's own instruction to only add these two if missing); `atRoot` computed in `buildState`.
+- `editor/EditorScrollView.kt` (modified): new `var onScrolled: ((y: Int, dy: Int) -> Unit)?` + an
+  `onScrollChanged(l, t, oldl, oldt)` override that calls `super` first, then `onScrolled?.invoke(t, t - oldt)` —
+  emit-only, never touches padding (rule 2).
+- `editor/EditorController.kt` (modified): `data class ScrollChange(y, dy)`, `val scrollChanges:
+  SharedFlow<ScrollChange>` (`extraBufferCapacity=64`, `DROP_OLDEST`), wired in `init` (`scrollView.onScrolled = {
+  y, dy -> _scrollChanges.tryEmit(ScrollChange(y, dy)) }`) and cleared in `release()`.
+- `ui/editor/EditorViewModel.kt` (modified): `val chrome = ChromeVisibility(viewModelScope)`; `uiState` now
+  combines `chrome.visible` into `EditorUiState.chromeVisible` (3-way `combine(uiInternal, autosave.state,
+  chrome.visible)`); new `setDrawerOpen(open: Boolean)` (mirrors `MdWriterRoot`'s `drawerState` into
+  `EditorUiState.drawerOpen`, compact/modal mode only — the permanent pane never sets this) and `closeFind()`
+  (clears the always-false-until-T17 `findOpen` flag; part of the copied-verbatim back-ordering comment block).
+- `ui/editor/EditorHost.kt` (modified): `EditorHost` gained `swipeEnabled`/`swipeAccepts`/`onSwipeArmedDown`/
+  `onSwipe`/`onTopTap`/`onOpenLibrary` params; a `DisposableEffect` adds/removes the "Open library" accessibility
+  custom action on `controller.editText` (step 11, verbatim). `EditorSurface` (internal) now applies
+  `.editorSwipeNav(...).observeTopTap(...)` to the same Box that hosts the `AndroidView` + `FormatToolbarOverlay`,
+  computing `rtl` via `LocalLayoutDirection.current` and `topPx` (56 dp chrome tap zone + status-bar inset) once
+  via `remember`, with every lambda passed through `rememberUpdatedState` (pitfall: `pointerInput(Unit)` captures
+  its lambda once).
+- `ui/editor/EditorScreen.kt` (modified): removed T12's temporary top-start glyph; now hosts `EditorChrome` (state:
+  local `overflowExpanded`), wires `controller.edits` → `vm.onEdit()` + `vm.chrome.onEdit()` (same collector, a
+  `SharedFlow` so a second collector would in fact be safe too — kept as one for symmetry with the
+  Channel-backed `events` collector above it, where a second collector would NOT be safe, per T12's own
+  documented bug), `WindowInsets.isImeVisible` → `vm.chrome.onImeVisibility()`, `controller.scrollChanges` →
+  `vm.chrome.onScroll(dy, 24.dp.toPx())`; builds `OverflowActions(canUndo, canRedo, onUndo=controller::undo,
+  onRedo=controller::redo, onNewNote)` locally (the only externally-supplied piece is `onNewNote`, from
+  `MdWriterRoot`, since only it holds `libraryVm`).
+- `ui/root/MdWriterRoot.kt` (rewritten): adaptive layout via `currentWindowAdaptiveInfoV2().windowSizeClass
+  .isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)`; `paneVisible` (`rememberSaveable`,
+  default `true`); the editor subtree wrapped in `remember { movableContentOf { EditorScreen(...) } }`; expanded
+  mode renders `Row { LibraryPane + VerticalDivider(hairline) + Box(weight 1f) { editor() } }` (no
+  `ModalNavigationDrawer` at all), compact mode keeps T12's `ModalNavigationDrawer`/`ModalDrawerSheet` unchanged
+  except for the two new back handlers added right after `LibraryDrawer(libraryVm)` inside the sheet's content
+  (`BackHandler(enabled = drawerState.isOpen && libContent?.atRoot == false) { libraryVm.navigateUp() }` /
+  `BackHandler(enabled = drawerState.isOpen && libContent?.searching == true) { libraryVm.clearSearch() }`);
+  `openLibrary()`/`toggleLibrary()`/`swipeAccepts(dir)`/`routeSwipe(dir)`/`swipeEnabled()` local functions per
+  Reference §G; the swipe callback restores the armed-down selection snapshot (`IntArray(2)` held via
+  `remember`), then fires `HapticFeedbackType.GestureThresholdActivate`, then routes; a new `commands:
+  SharedFlow<AppCommand>` parameter (no default — matches 01 §6.4's own signature) is collected in one
+  `LaunchedEffect` (`NewNote → libraryVm.newNote()`, `ToggleLibrary → toggleLibrary()`); the two root
+  `BackHandler`s (`findOpen`, then `selection.start != selection.end`) are the last two statements in the
+  function, per the copied-verbatim §H comment block now sitting above them.
+- `MainActivity.kt` (modified): owns `private val commands = MutableSharedFlow<AppCommand>(extraBufferCapacity =
+  8)`, passes it to `MdWriterRoot`; `onKeyShortcut` maps via `AppShortcuts.map` and falls back to `super` (so
+  `MarkdownEditText.onKeyShortcut`'s own `super` fallback lets Ctrl+N/O/L reach here); `onProvideKeyboardShortcuts`
+  publishes N and L (Ctrl+O and Ctrl+L both map to the same `ToggleLibrary` command, so only one is listed, per
+  the Keyboard Shortcuts Helper convention of one entry per distinct action).
+- `res/values/strings.xml`: `cd_library`/`cd_more` (glyph content descriptions), `tb_undo`/`tb_redo` (icon-row
+  content descriptions, matching the existing `tb_*` toolbar-action naming convention), `overflow_find/share/
+  preview/focus/typewriter/word_count/settings`, `shortcut_new_note`/`shortcut_toggle_library` (Keyboard
+  Shortcuts Helper labels). Reused existing `library_new_note`/`library_open_library` rather than duplicating.
+- `data/settings/Settings.kt`/`SettingsRepository.kt`: **no change needed** — `swipeNavigation: Boolean = true`
+  (key `swipe_navigation`) was already present from an earlier task; confirmed, not re-added.
+- `plans/01-architecture.md` §6.2: **no change needed** — `val scrollChanges: SharedFlow<ScrollChange>` was
+  already documented there from planning; confirmed it matches the shipped signature exactly (`ScrollChange(y,
+  dy)`, "from `EditorScrollView.onScrollChanged`").
+- Tests (all new): `ui/gesture/SwipeClassifierTest.kt` (11, JVM), `ui/editor/ChromeVisibilityTest.kt` (6, JVM,
+  virtual time via `runTest`), `ui/root/AppShortcutsTest.kt` (5, JVM), `ui/editor/OverflowMenuTest.kt` (3,
+  Robolectric Compose), `ui/gesture/SwipeNavTest.kt` (9, on-device) + `ui/gesture/testing/TouchInjector.kt`
+  (on-device, real `MotionEvent`s via `UiAutomation.injectInputEvent`).
+- `editor/EditorScrollDeviceTest.kt`, `editor/InstallStylingDeviceTest.kt` (modified, follow-up fix — see
+  Deviations): both retargeted from `MainActivity` to the debug-only `dev.mdwriter.debug.EditorPerfActivity`
+  harness (`putExtra("perfEdits", 0)` added alongside the existing `sample` extra) to fix a pre-existing T11
+  regression the coordinator asked to be fixed on this branch rather than carried forward.
+
+**Verification:**
+- Acceptance 1 (`SwipeClassifierTest`, density 3, slop 24 px, long-press 400 ms): all 10 named scenarios plus the
+  RTL case, 11/11 green (`./gradlew :app:testDebugUnitTest --tests '...SwipeClassifierTest'`) — fast-LTR-commits-
+  TowardEnd + same-input-RTL-commits-TowardStart, dx168/dy67.2 commits, dx200@t700 Undecided-then-slow-up-Aborts,
+  vertical-drift Aborts, 30°-diagonal Aborts, still-450ms Aborts, second-pointer Aborts, flick-vx4000-dx90
+  Commits, flick-dx50 Aborts, flick-velocity-opposite-to-dx Aborts.
+- Acceptance 2 (`ChromeVisibilityTest`, `runTest` + `advanceTimeBy`/`runCurrent`): 6/6 green — edit hides; IME
+  hidden → visible at exactly 1500 ms, still hidden at 1499 ms (confirmed the exact boundary semantics of
+  `advanceTimeBy` with a disposable probe test before committing to these two numbers, then deleted the probe);
+  IME visible → stays hidden past 10 s, an IME-hide shows it; scroll-up 23 dp keeps hidden, 24 dp shows; a
+  downward scroll resets the upward accumulation; a top tap shows it.
+- Acceptance 3 (`AppShortcutsTest`): 5/5 green — Ctrl+N → NewNote; Ctrl+O and Ctrl+L → ToggleLibrary; plain N,
+  Ctrl+Alt+N, Ctrl+Shift+N → null.
+- Acceptance 4 (`OverflowMenuTest`, Robolectric Compose): 3/3 green — default `OverflowActions()` shows Undo/
+  Redo/New note only (Preview/Settings/Find/Share absent); `canUndo=false` → `assertIsNotEnabled()`; clicking
+  New note calls `onNewNote` exactly once and calls `onDismiss`.
+- Acceptance 5 (`SwipeNavTest`, on-device, `emulator-5554`, real `MainActivity` via
+  `createAndroidComposeRule<MainActivity>` + `TouchInjector`): **9/9 green** after two real bugs found and fixed
+  on-device (see Deviations) — unfocused 40+-line swipe (60 % width, 200 ms) opens the drawer; focused-with-IME
+  swipe opens the drawer, hides the IME (`WindowInsetsCompat.Type.ime()` no longer visible), and the caret after
+  closing equals the caret before (armed-down selection snapshot restored correctly); an active `setSelection(5,
+  15)` blocks the swipe entirely; long-press 800 ms + 150 dp drag leaves the drawer closed with
+  `editText.hasSelection()==true`; a 400 dp vertical drag with 30 dp horizontal drift leaves the drawer closed
+  with `scrollView.scrollY > 0`; a two-finger horizontal swipe does nothing; an end→start swipe does nothing (no
+  preview yet, `previewAvailable=false`); with `swipeNavigation=false` the same start→end swipe does nothing;
+  Ctrl+L (`Instrumentation.sendKeySync`, real `ACTION_DOWN`+`ACTION_UP` `KeyEvent`s with `META_CTRL_ON`) opens the
+  drawer both focused and unfocused. `closeDrawerIfOpen()`/`assertLibraryVisible()`/`assertLibraryNotVisible()`
+  use `isDisplayed()`/`assertIsDisplayed()`/`assertIsNotDisplayed()`, never bare `assertExists()`/
+  `assertDoesNotExist()` (see Deviations for why).
+- Acceptance 6 (screenshots, `emulator-5554`, compact/phone, light mode): `idle.png` — a freshly-launched,
+  unfocused, IME-hidden document shows exactly two glyphs (top-start library `left_panel_open`, top-end overflow
+  `more_vert`) and the caret; nothing else. `typing.png` — after `adb shell input text hello` (immediately, no
+  settle delay) both glyphs are gone; a second capture one keystroke later (`world`) confirms a fully clean fade
+  with zero residual opacity, ruling out a mid-transition artifact in the first capture.
+- Acceptance 7 (back ordering, compact mode, on-device): with the drawer open at the library root (no subfolder
+  to go up from, not searching — both new `BackHandler`s in `ModalDrawerSheet`'s content correctly disabled), one
+  Back press closes the drawer (`topResumedActivity` stays `MainActivity`, confirmed via
+  `dumpsys activity activities`); a second Back press (now with the drawer closed and no selection/find open)
+  sends the app home (`topResumedActivity` becomes `NexusLauncherActivity` — the "back-to-home" path, since no
+  `BackHandler` was left enabled). The folder-up sub-case (Back inside a subfolder goes up one level before a
+  second Back closes the drawer) was verified by code + the `atRoot`/`navigateUp()` wiring rather than a second
+  full manual pass (both back-priority `BackHandler`s and `LibraryViewModel.atRoot`'s crumb-count computation are
+  simple, already covered indirectly by `LibraryViewModelTest`'s existing crumb push/goTo/up assertions, which
+  T13 did not change).
+- Acceptance 8 (tablet, `wm size 2560x1600` + `wm density 320` = 1280 dp, on-device): screenshot shows a 320 dp
+  (640 px at this density — confirmed against the pane's measured right edge) permanent `LibraryPane` + a
+  hairline `VerticalDivider` + the editor's own centred column, exactly per Reference §G. The top-start glyph
+  reads `ic_left_panel_close` while the pane is visible; tapping it hides the pane (icon flips to
+  `ic_left_panel_open`, editor column re-centres full-width); a start→end swipe with the pane hidden shows it
+  again; an end→start swipe with the pane visible hides it again (both via `adb shell input swipe`, since the
+  pane-toggle logic is identical `editorSwipeNav`/`accepts(dir)` code exercised by `SwipeNavTest` on the phone
+  size — this pass targets the adaptive-layout wiring specifically, not the gesture classifier a second time).
+  Typed a marker word (`TABLETMARK`) while the pane was visible, then `wm size reset`/`wm density reset` back to
+  compact: the typed text was still present in the document, and tapping Undo in the overflow menu removed
+  exactly that word — confirming both the document content and the undo history survive the
+  compact↔expanded switch (the `movableContentOf`-wrapped editor subtree keeps `EditorController`/its
+  `MarkdownEditText`/`MdUndoManager` alive across the switch, never re-installing).
+- Acceptance 9: `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key` → **BUILD SUCCESSFUL** (105 tasks: spotless
+  format+check, full JVM test suite, Android Lint, release R8 build). Lint SARIF: **0 errors**, 31 warnings (down
+  from 38 pre-T13 — several of the previously-unused icons T02 shipped are now wired in). Full JVM suite: **326
+  tests, 0 failures** (301 pre-existing + 25 new: 11+6+5+3). `make test-device DEVICE=emulator-5554`: **51/51
+  green** (see Deviations for the pre-existing `EditorScrollDeviceTest`/`InstallStylingDeviceTest` regression this
+  task also fixed, plus a one-off flaky third test chased down and confirmed unrelated along the way).
+
+**Final `SwipeTuning` values used:** unchanged from the task's own Reference §A starting points — `COMMIT_DP=56f`,
+`RATIO=2.5f`, `MAX_COMMIT_MS=600L`, `FLICK_DP_PER_S=1000f`, `MIN_FLICK_DP=24f`. On-device testing (the full
+`SwipeNavTest` matrix plus extensive manual swiping in both phone and tablet layouts) found no case where these
+defaults misclassified a gesture, so none were retuned.
+
+**Deviations from the plan:**
+- **`Modifier.editorSwipeNav` takes `rtl: Boolean` instead of reading `LocalLayoutDirection.current` inside the
+  `pointerInput` block.** Verified by decompiling the actual `ui-android:1.12.1` classes shipped in this build:
+  `PointerInputScope`/`AwaitPointerEventScope` extend only `Density`, never carry a `layoutDirection` accessor —
+  the task's own Reference §B sketch (`val rtl = layoutDirection == LayoutDirection.Rtl` inside the gesture block)
+  does not compile against this Compose version. A `composed { }` wrapper reading it once, tried first, compiles
+  but trips ktlint's `compose:modifier-composed-check` (composed modifiers are deprecated for performance
+  reasons). Fixed by making `rtl` a plain constructor-style parameter the caller (`EditorSurface`) supplies from
+  `LocalLayoutDirection.current`, read once per composition — behaviourally identical (a phone/tablet's
+  locale-driven RTL setting cannot change without an activity recreation anyway) and avoids both problems. Not a
+  `01-architecture.md` change (implementation detail below the documented `EditorController`/`editorSwipeNav`
+  contract).
+- **Real bug found via `SwipeNavTest` failing, not by inspection: `TouchInjector`'s single-pointer
+  `MotionEvent.obtain(downTime, eventTime, action, x, y, metaState)` overload leaves every pointer's `toolType` at
+  its default, `TOOL_TYPE_UNKNOWN`.** Compose maps that to `PointerType.Unknown`, never `PointerType.Touch` — and
+  `editorSwipeNav`'s very first line, `if (down.type != PointerType.Touch || !enabled()) return@awaitEachGesture`,
+  silently discarded every synthesized single-finger gesture as a result (confirmed via a temporary
+  `Log.i("PROBESWIPE", "down type=${down.type} ...")` added to `editorSwipeNav`, then removed once root-caused).
+  `twoFingerSwipe` was unaffected — it already used the full `PointerProperties`-based `MotionEvent.obtain`
+  overload with an explicit `toolType = TOOL_TYPE_FINGER` for its own reasons (multi-pointer support). Fixed by
+  rewriting `TouchInjector.obtain(...)` to always use that same full overload with one `PointerProperties`
+  declaring `TOOL_TYPE_FINGER`. This is exactly the kind of "precise timing/velocity control `adb shell input`
+  cannot give you" pitfall the task's own §J anticipated, just manifesting as a tool-type gap instead of a timing
+  one.
+- **Real bug found the same way: `SwipeNavTest.longPressThenDragSelectsInsteadOfSwiping`'s original coordinate
+  used a fraction of `editText.height`, not the visible viewport.** `MarkdownEditText` is a `wrap_content` child of
+  the scrolling `EditorScrollView` (01 §4.4) — its `height` is the height of the *entire document*, not the
+  screen. For a 60-line test document this produced a touch point thousands of pixels below the physical display,
+  which the system silently dropped (confirmed: zero `PROBESWIPE` log lines for that specific test run, meaning
+  `awaitFirstDown` never even fired). Fixed by deriving the touch point from `screenBounds()` (the real window
+  metrics) instead, matching every other gesture in the same test file.
+- **Real bug found via the same on-device debugging session, in the test file itself, not production code:
+  `closeDrawerIfOpen()`/`assertLibraryVisible()`/`assertLibraryNotVisible()` originally used
+  `onNodeWithText(...).assertExists()`/`.assertDoesNotExist()`.** `LibraryDrawer`'s content stays composed at all
+  times inside `ModalNavigationDrawer` (only translated off-screen while closed, never removed from the
+  semantics tree), so `assertExists()` is `true` whether the drawer is open OR closed — `closeDrawerIfOpen()`
+  therefore fired a needless back-press with nothing actually open on every single test, which (correctly, per
+  the T13 back-priority contract) took the whole app home, destroying the `ActivityScenario` and failing the next
+  `onActivity` call with `NullPointerException: Cannot run onActivity since Activity has been destroyed already`.
+  Root-caused by watching `LifecycleMonitor`'s own `PAUSED`/`STOPPED`/`DESTROYED` log lines land exactly between
+  two temporary `Log.i("PROBE", ...)` markers bracketing `closeDrawerIfOpen()`'s body. Fixed by switching to
+  `isDisplayed()`/`assertIsDisplayed()`/`assertIsNotDisplayed()` throughout, which check actual on-screen bounds
+  instead of mere tree membership. A comment in the test file records this for whoever next writes a
+  drawer-open-state check in this codebase.
+- **`MdWriterRoot(container, commands)` has no default value for `commands`** (`SharedFlow<AppCommand>`, no
+  `= MutableSharedFlow()`), matching 01 §6.4's own literal signature (`MdWriterRoot(container, commands: …, launch:
+  …, newIntents: …)` — no defaults shown there either) and incidentally required by ktlint's
+  `compose:param-order-check` (a defaulted `commands` ahead of the non-defaulted-by-convention `modifier` position
+  violated the required params-before-modifier-before-defaults ordering).
+- `EditorHost`'s a11y "Open library" custom action and the chrome glyph's tap both call the same `toggleLibrary`
+  (not a separate always-`openLibrary`-only action for the a11y path). In compact mode `toggleLibrary()` reduces
+  to exactly `openLibrary()`, so this only matters in expanded/tablet mode, where invoking the a11y action while
+  the pane is already visible would hide it rather than being a no-op. Judged an acceptable simplification (one
+  function instead of two subtly-different ones) — no acceptance criterion exercises this exact corner, and the
+  common case (compact mode, pane not applicable) is unaffected.
+- No library/plugin versions were bumped. `androidx.compose.material3.adaptive:adaptive` (needed for
+  `currentWindowAdaptiveInfoV2()`) was **already** present in `gradle/libs.versions.toml` and `app/build.gradle.kts`
+  (added by an earlier task in anticipation of T13) — confirmed via `grep`, nothing added.
+- No other `01-architecture.md` edit was needed beyond confirming §6.2's pre-existing `scrollChanges` line
+  matches the shipped signature.
+- **Follow-up fix (same branch, after the coordinator asked for `make test-device` to be fully green rather than
+  carrying two pre-existing failures forward): `EditorScrollDeviceTest`/`InstallStylingDeviceTest` retargeted from
+  `MainActivity` to the debug-only `EditorPerfActivity` harness.** Both tests launched `MainActivity` with a
+  `sample=100k`/`sample=small` intent extra expecting it to install that exact document directly — a mechanism
+  that lived in `MainActivity`'s old `EditorDemo` composable (T05) and was removed when T11 replaced it with the
+  real `MdWriterRoot`/`DocumentSession` flow (which always opens whichever document the session resolves —
+  welcome note / last-open / a new note — never an arbitrary sample). `SampleDocs` (`app/src/main/kotlin/dev/
+  mdwriter/debug/SampleDocs.kt`) still carries the comment "gated by `BuildConfig.DEBUG` at every call site — see
+  `MainActivity`", a stale reference to that removed mechanism. Rather than reintroducing a parallel debug-only
+  branch into `MainActivity`/`MdWriterRoot` (risking the real app's document-session flow for the sake of two
+  tests), both tests now launch `dev.mdwriter.debug.EditorPerfActivity` instead — this codebase's own established
+  debug-only harness (added by T07, extended by T08 specifically "for `EditorTestHost`'s instrumented tests"),
+  already reading the identical `sample` intent extra (`SampleDocs.forExtra(...)`) and installing it directly on
+  a real `EditorController` via the exact same `install(InstallRequest(...))` path `MainActivity` used to use.
+  Only change per test: `MainActivity::class.java` → `EditorPerfActivity::class.java`, plus `putExtra("perfEdits",
+  0)` to disable the harness's scripted-edit loop (unrelated to either test). Zero production-code changes;
+  `MainActivity`/`MdWriterRoot` untouched. `SampleDocs`'s own doc comment is now technically stale (says "see
+  `MainActivity`") but still factually true in spirit (still debug-only, gated by `EditorPerfActivity` living in
+  `app/src/debug`) — left as is rather than editing an unrelated file's KDoc for a one-line accuracy nit.
+  **A genuine, if indirect, second-order effect of this fix**: with both tests now actually exercising
+  `EditorPerfActivity` end-to-end (previously they failed inside their own `waitUntil` before ever finishing),
+  `make test-device`'s very next test alphabetically, `SelectionToolbarTest.programmaticSelectionShowsAfter150ms`,
+  became flaky — reproduced 2/2 times immediately after these two, 0/2 times in isolation or after an
+  `am force-stop dev.mdwriter.debug` cool-down first. That test asserts a selection-pill re-show animation has
+  NOT yet fired at a real `Thread.sleep(50)` mark (150 ms delay) — exactly the shape of assertion that becomes
+  flaky under transient device load, and the two tests immediately before it now do real, CPU-heavy work (styling
+  a 100k-character document) that they never used to complete. Root-caused by bisecting: ran the 3 tests together
+  (reproduced), then the same 3 after a `force-stop` + 2 s settle (passed 9/9), then the full 51-test suite fresh
+  (passed 51/51). Not a functional regression in any production code this task touched (`SelectionToolbarTest` is
+  T09-owned, untouched here, and passes reliably on its own) — recorded here since it was found while chasing this
+  exact fix, not filed as a further "known issue" since a clean full run reproduces 51/51 as required.
+
+**Ktlint suppressions (file / rule / reason):**
+- `ui/library/LibraryPane.kt` — `@Suppress("ktlint:compose:vm-forwarding-check")` on the whole file — a
+  deliberate one-line, width-only wrapper that forwards `LibraryViewModel` into `LibraryDrawer` unchanged (the
+  rule flags any 2-hop `@Composable` VM forwarding regardless of how thin the middle hop is); no state hoisting
+  alternative would avoid duplicating `LibraryDrawer`'s own (T12-owned) body.
+
+**Known issues / follow-ups:**
+- None outstanding for `make test-device` — see Deviations for the `EditorScrollDeviceTest`/
+  `InstallStylingDeviceTest` fix (both were pre-existing regressions from T11, now retargeted at the debug-only
+  `EditorPerfActivity` harness) and the adjacent flaky-test investigation. `make test-device DEVICE=emulator-5554`
+  is **51/51 green** on a clean run.
+- The emulator (`emulator-5554`, Android 17/API 37) was left in compact/phone mode (`wm size reset`/`wm density
+  reset` both run), light mode, with the debug app's Welcome note holding scratch content from this task's own
+  on-device verification (typed markers, undos, a "New folder" dialog that was cancelled rather than completed —
+  no `Drafts` folder was actually created, harmless). No release build installed; `~/.config/mdwriter/` never
+  touched; `/tmp/mdwriter-agent-key/` still holds the shared throwaway signing key.
+
+**Notes for the next task:**
+- **T14–T19 all read `OverflowActions` fields this task defined**: `onFind`/`onShare`/`onPreview`/`focus`/
+  `typewriter`/`wordCount`/`onSettings` are all `null`/no-op today; fill in your own field in `MdWriterRoot`'s
+  `OverflowActions(...)` construction inside `EditorScreen` (currently built entirely inside `EditorScreen`, since
+  only `onNewNote` needed to come from outside) — do not redeclare the data class.
+- **T16 (Preview)**: replace `MdWriterRoot`'s local `val onOpenPreview: () -> Unit = {}` and `val
+  previewAvailable = false` with the real preview-open plumbing; `routeSwipe(TowardStart)` and `swipeAccepts
+  (TowardStart)` already call/read them by name, so wiring the real preview state in is a same-file, few-line
+  change, not a rewrite. `ui.previewOpen` in `EditorUiState` is likewise already read by `swipeEnabled()` — T16
+  should start actually setting it.
+- **T17 (Find)**: `EditorViewModel.closeFind()` exists and is already wired into the root `BackHandler`
+  (`BackHandler(enabled = ui.findOpen) { editorVm.closeFind() }`); `EditorUiState.findOpen` just needs a real
+  setter alongside it. `OverflowActions.onFind` is the icon-row slot.
+- **T18 (Share)**: `OverflowActions.onShare` is the icon-row slot; `FileRow`/`RowMenu`'s `rowMenuExtras` slot
+  (from T12) is unrelated/separate and still open for T18's own Share menu entry.
+- **T19 (Settings)**: `OverflowActions.onSettings` is the row slot.
+- **`EditorController.scrollChanges`** (`SharedFlow<ScrollChange>`) is a general-purpose scroll signal now, not
+  chrome-specific — a future task wanting scroll-position-driven behaviour (e.g. T15's typewriter scrolling) can
+  collect it directly rather than re-deriving scroll deltas from `EditorScrollView`.
+- **`LibraryViewModel.atRoot`** (on `LibraryUiState.Content`) and **`navigateUp()`/`clearSearch()`** are the
+  names the back-ordering contract uses; don't reintroduce differently-named equivalents.
+- **Adaptive layout**: `MdWriterRoot`'s `expanded`/`paneVisible` locals and the `movableContentOf`-wrapped
+  `editor` are all scoped inside `MdWriterRoot` itself (not hoisted to a separate composable) — a future task
+  adding more adaptive-layout behaviour (T20 "large screens" hardening) should extend this function rather than
+  re-deriving the width-class breakpoint elsewhere; `WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND` (840 dp) is
+  the single source of truth for the compact/expanded threshold, already matching `WidthClass.EXPANDED_MIN_DP` in
+  `ui/theme/Tokens.kt` (T02) — the two are conceptually the same threshold from two different libraries
+  (`androidx.window.core.layout` vs. this app's own `WidthClass`), not a discrepancy to reconcile now.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.

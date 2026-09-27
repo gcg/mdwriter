@@ -9,7 +9,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
-import dev.mdwriter.MainActivity
+import dev.mdwriter.debug.EditorPerfActivity
 import dev.mdwriter.editor.spans.HangRoomSpan
 import dev.mdwriter.editor.spans.MdStyleSpan
 import org.junit.Test
@@ -18,6 +18,10 @@ import org.junit.runner.RunWith
 /**
  * Instrumented: opening [dev.mdwriter.debug.SampleDocs.SMALL] on a phone-width (Compact, 02 §3) portrait screen
  * produces the styling 02 §4 promises (Acceptance 3).
+ *
+ * Launches the debug-only [EditorPerfActivity] harness, not `MainActivity` — see [EditorScrollDeviceTest]'s KDoc
+ * for why (T11 replaced `MainActivity`'s old `sample`-reading `EditorDemo` composable with the real
+ * `MdWriterRoot`/`DocumentSession` flow, which never installs an arbitrary sample document).
  */
 @RunWith(AndroidJUnit4::class)
 class InstallStylingDeviceTest {
@@ -46,11 +50,12 @@ class InstallStylingDeviceTest {
     @Test
     fun installedDocumentIsStyledPerDesignSpec() {
         val intent =
-            Intent(ApplicationProvider.getApplicationContext(), MainActivity::class.java).apply {
+            Intent(ApplicationProvider.getApplicationContext(), EditorPerfActivity::class.java).apply {
                 putExtra("sample", "small")
+                putExtra("perfEdits", 0)
             }
         val instrumentation = InstrumentationRegistry.getInstrumentation()
-        ActivityScenario.launch<MainActivity>(intent).use { scenario ->
+        ActivityScenario.launch<EditorPerfActivity>(intent).use { scenario ->
             var scrollView: EditorScrollView? = null
             waitUntil {
                 var ready = false

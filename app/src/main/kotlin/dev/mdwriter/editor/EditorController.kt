@@ -46,6 +46,12 @@ data class EditEvent(
     val version: Long,
 )
 
+/** T13: one [EditorScrollView] scroll ([EditorController.scrollChanges]); [dy] > 0 means scrolled down. */
+data class ScrollChange(
+    val y: Int,
+    val dy: Int,
+)
+
 /**
  * Facade the UI talks to (01 §6.2). This task adds the styled document install: open a document, get it fully
  * styled on the first frame (build off-main, `setText` on main). T07–T17 extend this same class — do not add
@@ -80,6 +86,12 @@ class EditorController(
 
     /** One [EditEvent] per text change (typing, IME, undo, toolbar) — [install] bumps [version] but never emits here. */
     val edits: SharedFlow<EditEvent> = _edits.asSharedFlow()
+
+    private val _scrollChanges =
+        MutableSharedFlow<ScrollChange>(extraBufferCapacity = 64, onBufferOverflow = BufferOverflow.DROP_OLDEST)
+
+    /** T13: one [ScrollChange] per [EditorScrollView] scroll — drives [dev.mdwriter.ui.editor.ChromeVisibility]. */
+    val scrollChanges: SharedFlow<ScrollChange> = _scrollChanges.asSharedFlow()
 
     /** +1 on every text change AND on [install] (the autosave baseline, T11). */
     var version: Long = 0
@@ -146,6 +158,7 @@ class EditorController(
 
     init {
         scrollView.onGeometryChanged = { syncHangRoom() }
+        scrollView.onScrolled = { y, dy -> _scrollChanges.tryEmit(ScrollChange(y, dy)) }
         editText.addTextChangedListener(restyler)
         editText.addTextChangedListener(mdUndo) // AFTER the restyler's (rule: restyle reacts to the same edits)
         editText.mdUndo = mdUndo
@@ -353,6 +366,7 @@ class EditorController(
 
     fun release() {
         scrollView.onGeometryChanged = null
+        scrollView.onScrolled = null
         editText.removeTextChangedListener(mdUndo)
         editText.removeOnAttachStateChangeListener(selectionUi)
     }
