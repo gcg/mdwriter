@@ -85,13 +85,18 @@ app/src/main/kotlin/dev/mdwriter/
     root/                 MdWriterRoot.kt (adaptive layout, drawer, overlays, back ordering), AppCommands.kt (AppCommand +
                           AppShortcuts) [T13], KeyboardShortcuts.kt (ShortcutCatalog) [T20]
     editor/               EditorScreen.kt, EditorHost.kt (AndroidView), EditorViewModel.kt, EditorUiState.kt,
+                          DocumentSession.kt (interface EditorViewModel implements; the library's seam into the
+                          open-document session) [T12],
                           EditorChrome.kt (glyph buttons, stats line), OverflowMenu.kt, ConflictBanner.kt,
                           ChromeVisibility.kt [T13], StatsPipeline.kt [T15], ReadOnlyPill.kt [T18], EditorAccessibility.kt [T20]
     toolbar/              FormatToolbar.kt (selection pill), ToolbarAction.kt (T08; plain Kotlin, no Compose — the ONE
                           ui package the engine may import, for EditorController.perform), MoreMenu.kt
     gesture/              EditorSwipeNav.kt (Modifier.editorSwipeNav), SwipeTuning.kt, SwipeClassifier.kt [T13]
-    library/              LibraryContent.kt, LibraryViewModel.kt, FileRow.kt, RelativeDate.kt, dialogs, LibraryPane.kt [T13],
-                          ExportAllNotesAction.kt [T18]
+    library/              LibraryContent.kt (LibraryDrawer + stateless drawer body), LibraryViewModel.kt,
+                          LibraryUiState.kt (Crumb, LocationItem, FileItem, PendingDelete, LibraryEvent,
+                          LibraryUiState), FileRow.kt (FileRow/FolderRow/LocationRow/RowMenu), LibraryDialogs.kt
+                          (NameDialog, MoveDialog, validateName), LibrarySnackbar.kt (DeleteUndoSnackbarHost),
+                          RelativeDate.kt [T12], LibraryPane.kt [T13], ExportAllNotesAction.kt [T18]
     preview/              PreviewOverlay.kt, PreviewWebView.kt, DocumentImagePathHandler.kt, ImagePath.kt,
                           PreviewLinkPolicy.kt, PreviewTheme.kt, PreviewRenderer.kt, PreviewSync.kt [T16]
     settings/             SettingsSheet.kt, AboutSheet.kt
@@ -100,8 +105,11 @@ app/src/main/kotlin/dev/mdwriter/
     storage/              DocumentStore.kt, InternalStore.kt, SafTreeStore.kt, AtomicWriter.kt, TextCodec.kt,
                           RecoveryStore.kt, StorageError.kt, NoteFiles.kt [T10], Hashes.kt [T10], TrashBin.kt [T10],
                           ExternalDocStore.kt [T18]; T14 adds SafIo.kt, TreeGrants.kt, LocationInfo.kt, LinkFolderLauncher.kt
-    library/              Location.kt (LocationId, DocRef, FolderRef, DocKey), LibraryEntry.kt, LibraryRepository.kt,
-                          Excerpt.kt (one-line delegate to DocTitle.excerpt) [T12]
+    library/              Location.kt (LocationId, DocRef, FolderRef, DocKey), LibraryEntry.kt, LibraryRepository.kt
+                          (entries/invalidate/nameOf/createUnique/rename/duplicate/move/createFolder/trash/
+                          folderTree/prefix/search, FolderNode, SearchHit) [T12],
+                          Excerpt.kt (one-line delegate to DocTitle.excerpt), UniqueName.kt (numbered/copyOf/
+                          splitName), AutoNamer.kt (LeaveReason, LeaveOutcome, AutoNamer) [T12]
     document/             DocumentRepository.kt, AutosaveCoordinator.kt, LoadedDocument.kt, SaveResult.kt,
                           ConflictNames.kt, WelcomeNote.kt [T11]
     settings/             Settings.kt, SettingsRepository.kt, PositionStore.kt
@@ -151,6 +159,7 @@ class AppContainer(app: Application) {
     val library: LibraryRepository              // routes Internal / Tree locations (+ SafTreeStore instances)
     val documents: DocumentRepository           // load/save/stat with TextCodec + recovery + conflict detection
     val autosave: AutosaveCoordinator           // debounce policy only; persists through an AutosaveTarget (T11)
+    val autoNamer: AutoNamer                    // auto-name-on-leave / delete-if-empty-untitled (T12)
     // T14 adds: safIo, treeGrants.  T18 adds: externalStore, intentHandler, shareOut, exporter.
 }
 // Blocking I/O always runs on dispatchers.io inside the repositories (applicationScope itself stays on Default).

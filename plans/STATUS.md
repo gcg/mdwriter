@@ -1881,3 +1881,211 @@ callsite-flexibility gap, not just a lint quirk to suppress.
   there; it's intentional forward-compat, per the task's own file list ("T12 extends it").
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T12 — Library drawer UI + file operations — DONE — 2026-09-27
+**What changed:**
+- `data/library/LibraryRepository.kt` (modified): added `entries(folder): Flow<List<LibraryEntry>>` (conflated,
+  reacts to `store.changes()` + `invalidate()`), `invalidate()`, `nameOf(ref)`, `createUnique`, `rename`,
+  `duplicate` ("X copy.ext"), `move`, `createFolder`, `trash`, `folderTree(location)` (root-first, depth <= 8,
+  `FolderNode`), `prefix(entry, maxChars)` (LRU-500 decoded-head cache, keyed `DocKey+lastModified+size`),
+  `search(location, query, limit)` (name+content, name matches first, `SearchHit`); a new `io` constructor param
+  (default `Dispatchers.IO`); every mutation calls `invalidate()`.
+- `data/library/UniqueName.kt` (new, copy of task spec §A verbatim): `splitName`/`numbered`/`copyOf`.
+- `data/library/Excerpt.kt` (new): one-line delegate `fromPrefix = DocTitle.excerpt`.
+- `data/library/AutoNamer.kt` (new): `LeaveReason`, `LeaveOutcome`, `AutoNamer.onLeave(ref, reason)` — renames an
+  auto-named note from its first line on leave, deletes it only when blank **and** `reason == Switch`. Guards on
+  `ref !is DocRef.InternalFile` (covers `External` and future `TreeDoc`, stricter than the task's own sketch which
+  only named `External` — a deliberate, safe widening, see Deviations).
+- `ui/editor/DocumentSession.kt` (new): the interface (`current`, `flush()`, `open(ref, showIme, leaveCurrent)`,
+  `onCurrentRefChanged(old, new)`) `EditorViewModel` implements — the seam `LibraryViewModel` opens documents
+  through.
+- `ui/editor/EditorViewModel.kt` (modified): implements `DocumentSession`; added `_current`/`current`; renamed the
+  old private `open(ref, showIme, selection, scrollY)` to `installAndOpen` (no longer flushes internally — every
+  call site now flushes explicitly, see Deviations); new `override suspend fun open(...)` flushes + (if
+  `leaveCurrent`) calls `autoNamer.onLeave(_, Switch)` before installing; `onCurrentRefChanged` re-points
+  `session.ref`/`displayName`, `uiState.doc/title`, the `SavedStateHandle` doc key, moves the recovery copy, and
+  fixes `settings.lastOpenDoc`; `onDrawerOpened()` flushes + `onLeave(_, DrawerOpened)`; `onStop()` now also runs
+  `onLeave(_, Stopped)` inside the existing `appScope`+`NonCancellable` block. New `autoNamer: AutoNamer`
+  constructor param (also added to `EditorViewModel.Factory` and `EditorViewModelTest`).
+- `ui/library/LibraryUiState.kt` (new): `Crumb`, `LocationItem`, `FileItem`, `PendingDelete`, `LibraryEvent`
+  (`CloseDrawer`/`Message`), `LibraryUiState` (`Loading` / `Content`).
+- `ui/library/LibraryViewModel.kt` (new): `sortEntries` (pure, folders-first-then-by-`SortOrder`), `displayTitle`,
+  and the full drawer VM: search (250 ms debounce, blank query resolves immediately — see Deviations),
+  breadcrumbs (`openFolder`/`goTo`/`up`), sort, `newNote`, `createFolder`, `rename`/`duplicate`/`move` (flush +
+  `onCurrentRefChanged` when the target is the open doc), `delete`/`undoDelete`/`commitPendingNow` (5 s window,
+  `appScope`+`NonCancellable`, a second delete or `onStop()` commits the first immediately), `folderTree()` (for
+  the Move… dialog), `onDrawerOpened`/`onDrawerClosed`/`onStop`. Exposes `pendingDelete: StateFlow<PendingDelete?>`
+  for the snackbar host.
+- `ui/library/LibraryContent.kt` (new): `LibraryDrawer` (the only composable touching the ViewModel — hosts the
+  Move…/New-folder dialogs and a `now: Instant` refreshed every 60 s) + stateless `LibraryContent` (header,
+  search field, Locations/"On this device", hairline, breadcrumb + folder menu, folder/file `LazyColumn`, empty
+  state) and the folder menu (sort group + "New folder…").
+- `ui/library/FileRow.kt` (new): `LocationRow`, `FolderRow`, `FileRow` (title/excerpt/relative-date/accent bar,
+  `combinedClickable` long-press → `RowMenu`; row itself carries `testTag("activeFileBar"/"fileRow")` — see
+  Deviations for why the tag moved off the title `Text`), `RowMenu` (Rename/Duplicate/Move…/`rowMenuExtras`/
+  Delete).
+- `ui/library/LibraryDialogs.kt` (new): `NameCheck`/`validateName` (pure), `NameDialog`, `MoveDialog` (folder tree,
+  current folder disabled).
+- `ui/library/LibrarySnackbar.kt` (new): `DeleteUndoSnackbarHost(vm, hostState, modifier)` — takes the
+  `SnackbarHostState` from its caller (see Deviations: it does **not** collect `vm.events` itself any more).
+- `ui/library/RelativeDate.kt` (new, copy of task spec §C verbatim).
+- `ui/editor/EditorScreen.kt` (modified): now takes a hoisted `controller: EditorController` (no longer creates
+  its own) and `onOpenLibrary: () -> Unit`; renders the TEMPORARY library glyph (`ic_left_panel_open`, 48 dp
+  target, `textSecondary`, `WindowInsets.statusBars` + 4 dp start, contentDescription "Open library").
+- `ui/root/MdWriterRoot.kt` (modified): hoists `EditorController`; constructs `LibraryViewModel` via
+  `viewModel {}`; `ModalNavigationDrawer` + `ModalDrawerSheet(drawerState = …)` (predictive-back-aware overload),
+  width `min(360 dp, screenWidth − 56 dp)`, `RectangleShape`, `tonalElevation = 0.dp`; IME hide-on-open/
+  restore-on-close keyed off `controller.hasFocus()`; **the single collector** of `libraryVm.events` (see
+  Deviations — this is where the real bug was found and fixed); two `SnackbarHostState`s (editor messages, and a
+  second one owned here and passed to `DeleteUndoSnackbarHost` for library messages/undo).
+- `AppContainer.kt` (modified): `val autoNamer: AutoNamer = AutoNamer(library, documents, settings, positions)`;
+  `library` now also gets `dispatchers.io`.
+- `res/values/strings.xml`: all T12 strings (`library_*` — title, search, locations, on-this-device, yesterday,
+  no-notes, sort group, new-folder, rename, duplicate, move, delete, deleted-undo template, cancel, name-empty/
+  exists, etc.). No hard-coded UI text.
+- Tests (all new): `data/library/{UniqueNameTest=4, ExcerptTest=6, AutoNamerTest=9}`,
+  `ui/library/{RelativeDateTest=8, LibraryViewModelTest=11, LibraryUiTest=8}`,
+  `testing/FakeDocumentSession.kt` — **46 new tests**. `EditorViewModelTest.kt` updated to construct/pass a real
+  `AutoNamer`.
+- `plans/01-architecture.md`: §3 package map updated (`DocumentSession.kt`, `AutoNamer.kt`, `UniqueName.kt`,
+  `Excerpt.kt`, `LibraryUiState.kt`, `LibrarySnackbar.kt`, `LibraryDialogs.kt`, and the real names of everything
+  else T12 added, replacing the placeholder prose); §5 dependency graph gets `autoNamer: AutoNamer`.
+
+**Verification:**
+- `./gradlew :app:testDebugUnitTest --tests 'dev.mdwriter.ui.library.*' --tests 'dev.mdwriter.data.library.*'` →
+  BUILD SUCCESSFUL. Full `:app:testDebugUnitTest` → **301 tests total, 0 failures** (255 prior + 46 new). Per-class
+  counts confirm every named scenario in Acceptance 1–3 is present: `UniqueNameTest=4` (splitName incl. case/no-
+  extension/hidden-file, numbered incl. case-insensitive collision, copyOf incl. numbered copy), `ExcerptTest=6`
+  (all six §B rows verbatim), `AutoNamerTest=9` (not-autoNamed→Kept, rename-from-first-line+key-moved,
+  colliding-name-numbered, same-title-again→Kept, blank+Switch→Deleted+gone-from-listing, blank+DrawerOpened→Kept,
+  blank+Stopped→Kept, External→Kept, forbidden-chars sanitized), `RelativeDateTest=8` (today 24h/12h, yesterday,
+  2-6-days weekday, same-year, different-year, future, zone-boundary, null), `LibraryViewModelTest=11` (sorted
+  folders-first-then-each-`SortOrder`; delete hides at once + `advanceTimeBy(4_999)` still on disk +
+  `advanceTimeBy(2)` trashed; undo within 5 s restores + never trashed; second delete commits the first
+  immediately; `onStop()` commits; deleting the open doc opens the newest other with
+  `showIme=false,leaveCurrent=false`; deleting the only doc creates a fresh Untitled with the same flags;
+  `newNote()` numbers Untitled→Untitled 2, opens with `showIme=true`, emits `CloseDrawer`; rename of the open doc
+  calls `flush()` then `onCurrentRefChanged`, clears `autoNamed`; search "rain" after `advanceTimeBy(300)` returns
+  a name-only match before a content-only match; crumbs push/goTo/up), `LibraryUiTest=8` (title strips extension
+  unless `showExtensions`; open row tagged `activeFileBar`; empty folder shows "No notes yet" + "New note" click
+  callback; `NameDialog` pre-fills and disables Confirm for unchanged/blank/existing-sibling names with the exact
+  error text, confirms with the sanitized base).
+- `make format` (see Deviations for the one lint-driven rename) then `make check KEYSTORE_DIR=/tmp/mdwriter-agent-key`
+  → **BUILD SUCCESSFUL** (105 tasks: spotless, full JVM suite, Android Lint, release R8 build). Lint SARIF:
+  **0 errors**, 38 warnings (same pre-existing classes as prior tasks; the one new error this task hit —
+  `NonObservableLocale` in `FileRow.kt` reading `Locale.getDefault()` inside a composable — was fixed properly by
+  switching to `LocalConfiguration.current.locales.get(0)`, not suppressed).
+- On-device (`emulator-5554`, Android 17/API 37, debug app, `pm clear` between passes):
+  - Acceptance 4: the temporary glyph (top-start, `ic_left_panel_open`) opens the drawer; `dumpsys input_method`
+    confirmed `mInputShown` flips `true → false` on open when the IME was up; closing via the scrim brought it
+    back only when the editor had focus before opening (verified both ways).
+  - Acceptance 5: tapped "+" → `run-as … ls files/library` showed `Untitled.md`; screenshot showed an empty,
+    focused editor with the IME visible. Typed content, opened the drawer → `AutoNamer` renamed it live
+    (`Untitled.md` → `Shopping list.md`, row shown bold with the accent bar, matching its new title).
+  - Acceptance 6: created a second empty `Untitled.md`, then switched to another note via the drawer — `ls
+    files/library` confirmed the empty untitled was gone (trashed); the Welcome note was never auto-named
+    (`autoNamed` never contains its key, since it's excluded at first-launch creation per T11).
+  - Acceptance 7: Rename ("Welcome copy" → "Groceries", via the long-press menu's `NameDialog`), Duplicate
+    ("Welcome" → "Welcome copy.md"), Move… ("Welcome" → `Drafts/Welcome.md`, with the dialog correctly disabling
+    the item's current folder — "On this device" greyed out, "Drafts" enabled) and Delete (snackbar "Deleted
+    'Groceries 2' · Undo" appeared; deleting the sole open root-level note both created a fresh Untitled **and**
+    restored the deleted note when Undo was tapped promptly — the two are independent) were each verified with a
+    `run-as … find files/library` before/after check. Letting a delete's undo window lapse (no tap within 5 s)
+    committed it to `files/.trash/<uuid>/<name>.md` + `meta.json`, confirmed via `find files/.trash`.
+  - Acceptance 8: Folder menu → "New folder…" → typed "Drafts" → `find files/library` showed the new `Drafts/`
+    directory; tapping its row updated the breadcrumb to "On this device › Drafts" and showed "No notes yet" +
+    "New note"; tapping the first crumb returned to the root listing.
+  - Acceptance 9: light-mode screenshot (`/tmp/t12-final-light.png` while working) shows "Library" bold 20 sp +
+    grey search icon + blue `edit_square`, "Locations"/"On this device" (bold, phone icon), a hairline divider,
+    breadcrumb "On this device" + sort icon, the open "Welcome" row bold with the 3 dp blue accent bar, its
+    relative date "3:06 AM" end-aligned, its excerpt in grey — no shadows, no tonal tint, drawer ≈ 360 dp on the
+    448 dp AVD. `cmd uimode night yes` → dark screenshot (`/tmp/t12-final-dark.png`) shows the same layout on the
+    dark tokens (`#141414`-ish surface, light text, same blue accent), reverted with `cmd uimode night no`
+    afterwards.
+  - `logcat -b crash` was checked against the device clock: the only `FATAL EXCEPTION` entries present are
+    timestamped ~5 hours before this session's on-device testing and reference `MainActivity.EditorDemo`/
+    `DesignGallery` — dead code removed by T11 — confirming they are leftover ring-buffer entries from a prior
+    agent's older build on this persistent emulator, not a crash from this session's build.
+
+**Deviations from the plan:**
+- **Real bug found and fixed via on-device testing, not by any JVM test:** `MdWriterRoot`'s original wiring had
+  **two independent collectors** of `LibraryViewModel.events` — one in `MdWriterRoot` (for `CloseDrawer`) and one
+  inside `DeleteUndoSnackbarHost` (for `Message`). `events` is `Channel(BUFFERED).receiveAsFlow()`, and a
+  `Channel` only ever delivers each element to **one** collector — the two effectively raced for every event, and
+  whichever one didn't "win" a given `CloseDrawer` silently dropped it, so the drawer sometimes never closed after
+  selecting a note from it. Fixed by making `MdWriterRoot`'s `LaunchedEffect` the **only** collector of
+  `libraryVm.events`, handling `CloseDrawer` directly and forwarding `Message` text into a `SnackbarHostState` that
+  is now created in `MdWriterRoot` and passed down to `DeleteUndoSnackbarHost` as a parameter (its signature
+  changed from `(vm, modifier)` to `(vm, hostState, modifier)`). Documented with comments at both call sites so a
+  future task doesn't reintroduce a second collector.
+- `LibraryViewModel`'s search flow does **not** apply the 250 ms `debounce` operator to a blank/absent query —
+  only a real (non-blank) query is debounced (via a custom `flatMapLatest` + `delay` inside the search branch,
+  `flowOf(null)` immediately otherwise). Kotlin's `debounce` also delays the *first* emission, which stalled the
+  whole `uiState` `combine()` pipeline (all inputs must emit once) by 250 ms after every subscription, including
+  the very first one — annoying in production (drawer opens to a blank flash) and fatal in
+  `LibraryViewModelTest` (nothing but `advanceTimeBy`-driven tests could ever see a `Content` state). Behavior for
+  an actual typed query is unchanged (still 250 ms debounced, `mapLatest`-cancelled).
+- `EditorViewModel`'s old private `open(ref, showIme, selection, scrollY)` (renamed `installAndOpen`) no longer
+  flushes-and-remembers the previous document as its own first action — that responsibility moved to each call
+  site (the new public `open()` override, `openFallbackChain()`, `createNewNoteAndOpen()`, and
+  `saveBufferAsNewAndOpen()`), because the public `DocumentSession.open()` needs `flush → autoNamer.onLeave →
+  install` in that exact order, and leaving the flush inside `installAndOpen` would have run it a second time
+  *after* `onLeave` had possibly already renamed/moved the document — silently recreating a stale position-store
+  entry under the pre-rename key. Every pre-existing call site was individually checked to still flush at
+  exactly the same points as before (see the code comments added at each).
+- `AutoNamer.onLeave` guards on `ref !is DocRef.InternalFile` rather than the task sketch's literal
+  `if (ref is DocRef.External) return Kept` — a strictly safer superset (also skips the not-yet-implemented
+  `DocRef.TreeDoc`) that behaves identically for every case the task's own `AutoNamerTest` names.
+- `FileRow`'s `testTag("activeFileBar")` sits on the row's outer `Box` (the one carrying `combinedClickable`), not
+  on the inner title `Text` as originally written — `combinedClickable`'s default `mergeDescendants` collapses all
+  descendant semantics into the row's own node, which made the inner tag invisible to a plain `onNodeWithTag`
+  (only reachable via `useUnmergedNode = true`, an unnecessary complication for callers). No visual change.
+- `Locale.getDefault()` inside `FileRow`'s composable body (feeding `RelativeDate.format`) was replaced with
+  `LocalConfiguration.current.locales.get(0)` per Android Lint's `NonObservableLocale` (a real, if unlikely,
+  bug — the row would not have re-rendered on a locale change without recomposing for some other reason first).
+- No library/plugin versions bumped, no new dependencies added — every icon named in the task spec (`ic_folder`,
+  `ic_sort`, `ic_create_new_folder`, `ic_drive_file_rename_outline`, `ic_drive_folder_upload`, `ic_content_copy`,
+  `ic_delete`, `ic_phone_android`, `ic_edit_square`, `ic_search`, `ic_close`, `ic_left_panel_open`, `ic_check`) was
+  already shipped by T02.
+
+**Known issues / follow-ups:**
+- Manual on-device exploration (not a shipped defect) surfaced how easy it is to mis-tap a Compose dialog by
+  guessing screen coordinates from a scaled screenshot; later verification passes switched to
+  `uiautomator dump` for exact widget bounds. No code changes resulted from this other than the fixes captured
+  above under Deviations.
+- The emulator's debug app was left with scratch state from this task's own verification (a `Drafts/` folder
+  containing a moved `Welcome.md`, a couple of renamed/duplicated notes, and a few trashed entries under
+  `files/.trash/`) — all scratch, `~/.config/mdwriter/` untouched, no release build installed.
+
+**Notes for the next task:**
+- **Drawer state lives in `MdWriterRoot`** (`rememberDrawerState(DrawerValue.Closed)`), not in `LibraryViewModel` —
+  `LibraryViewModel` only ever emits `LibraryEvent.CloseDrawer`/`Message` and reacts to `onDrawerOpened()`/
+  `onDrawerClosed()`/`onStop()` calls made *from* `MdWriterRoot`. **T13 must keep `MdWriterRoot` as the single
+  collector of `libraryVm.events`** (see Deviations) — do not add a second `vm.events.collect{}` anywhere; extend
+  the existing `when` branch instead.
+- **T13's swipe-to-open / fading chrome** replaces the temporary glyph in `EditorScreen.kt` (search
+  `// TEMPORARY (T12)`) and should call the same `onOpenLibrary` lambda `MdWriterRoot` already wires to
+  `drawerState.open()`; the back-handling story is still just `ModalDrawerSheet(drawerState)`'s own predictive-back
+  (T12 did not add a `BackHandler`).
+- **T18's `rowMenuExtras` slot**: `FileRow`/`RowMenu` both take `rowMenuExtras: @Composable (onClose: () -> Unit)
+  -> Unit = {}`, rendered between Move… and Delete in `RowMenu`; `LibraryContent`'s `FileRow(...)` call site
+  currently passes the default (empty) — T18 adds a `rowMenuExtras` param to `LibraryContent`/`LibraryDrawer` and
+  threads a Share entry through.
+- **T14's `locations` list**: `LibraryUiState.Content.locations: List<LocationItem>` is currently always
+  `[LocationItem(LocationId.Internal, library.rootOf(LocationId.Internal))]`; `LibraryContent`'s "Locations"
+  section only ever renders that one `LocationRow` plus the (not-yet-built) "Use a folder…" affordance. T14 should
+  extend `LibraryViewModel`'s `locations` construction (in `buildState`) to fold in `settings.linkedTrees`, and
+  give `LocationItem` a folder-name field for the row label (currently hard-coded "On this device" via
+  `stringResource`, since `LocationItem` itself carries no display name).
+- **New `LibraryRepository` members**: `entries`, `invalidate`, `nameOf`, `createUnique`, `rename`, `duplicate`,
+  `move`, `createFolder`, `trash`, `folderTree`, `prefix`, `search`, plus top-level `FolderNode`/`SearchHit` data
+  classes and a new `io: CoroutineDispatcher` constructor parameter (default `Dispatchers.IO`, last positional
+  param — existing 2-arg call sites are unaffected).
+- **New `AppContainer` member**: `autoNamer: AutoNamer`.
+- **No new `Settings`/`SettingsRepository` members were needed** — T11 already shipped `sortOrder`,
+  `showExtensions`, `newNoteExtension`, `autoNamed`, and `SettingsRepository.update{}`; T12 only consumes them.
+  `PositionStore.move`/`remove` were likewise already present from T11.
+- T19 (Settings UI for sort/extension toggles) reads `sortOrder`/`newNoteExtension`/`showExtensions` the same way
+  T12 does (`SettingsRepository.settings`/`.update{}`); no new plumbing needed there either.
+
+**Questions (if BLOCKED / STOP-AND-ASK):** none.
