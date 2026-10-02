@@ -2,6 +2,7 @@ package dev.mdwriter.ui.root
 
 import android.util.TypedValue
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
@@ -57,6 +58,7 @@ import dev.mdwriter.editor.spans.EditorStyle
 import dev.mdwriter.intents.RoutedIntent
 import dev.mdwriter.ui.editor.EditorScreen
 import dev.mdwriter.ui.editor.EditorViewModel
+import dev.mdwriter.ui.editor.RootSheet
 import dev.mdwriter.ui.gesture.SwipeDir
 import dev.mdwriter.ui.gesture.SwipeDir.TowardEnd
 import dev.mdwriter.ui.gesture.SwipeDir.TowardStart
@@ -66,9 +68,12 @@ import dev.mdwriter.ui.library.LibraryEvent
 import dev.mdwriter.ui.library.LibraryPane
 import dev.mdwriter.ui.library.LibraryUiState
 import dev.mdwriter.ui.library.LibraryViewModel
+import dev.mdwriter.ui.library.rememberExportAllNotes
 import dev.mdwriter.ui.preview.PreviewOverlay
 import dev.mdwriter.ui.preview.PreviewThemes
 import dev.mdwriter.ui.preview.PreviewWebViewHolder
+import dev.mdwriter.ui.settings.AboutSheet
+import dev.mdwriter.ui.settings.SettingsSheet
 import dev.mdwriter.ui.theme.EditorMetrics
 import dev.mdwriter.ui.theme.MdWriterTheme
 import dev.mdwriter.ui.theme.WidthClass
@@ -103,8 +108,15 @@ fun MdWriterRoot(
     newIntents: Flow<RoutedIntent>,
     modifier: Modifier = Modifier,
 ) {
-    val settings by container.settings.settings.collectAsStateWithLifecycle(initialValue = Settings())
+    val loaded by container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
+    val settings = loaded ?: Settings()
     MdWriterTheme(themeMode = settings.themeMode, pureBlack = settings.pureBlack, font = settings.typeface) {
+        // Compose the editor only after the FIRST real settings emission: a default-then-real double emission
+        // would reflow the document twice at startup (T19).
+        if (loaded == null) {
+            Box(Modifier.fillMaxSize().background(WriterTheme.colors.bg))
+            return@MdWriterTheme
+        }
         val editorVm: EditorViewModel = viewModel(factory = EditorViewModel.Factory)
         val libraryVm: LibraryViewModel =
             viewModel {
@@ -346,6 +358,7 @@ fun MdWriterRoot(
                         onOpenLibrary = ::toggleLibrary,
                         libraryIcon = libraryIcon,
                         onNewNote = libraryVm::newNote,
+                        onSettings = { editorVm.showSheet(RootSheet.Settings) },
                         onPreview = ::openPreview,
                         onCloseFind = ::closeFindBar,
                         swipeEnabled = ::swipeEnabled,
@@ -441,6 +454,34 @@ fun MdWriterRoot(
             onClose = ::closePreview,
             onShare = { editorVm.shareCurrent() },
         )
+
+        // T19: the Settings / About bottom sheets. About's dismiss returns to Settings; Settings' dismiss closes.
+        val sheet by editorVm.sheet.collectAsStateWithLifecycle()
+        val exportAll = rememberExportAllNotes(container.exporter, editorVm)
+        when (sheet) {
+            RootSheet.None -> {}
+
+            RootSheet.Settings -> {
+                SettingsSheet(
+                    settings = settings,
+                    showLineLength =
+                        windowSizeClass.isWidthAtLeastBreakpoint(
+                            WindowSizeClass.WIDTH_DP_MEDIUM_LOWER_BOUND,
+                        ),
+                    onUpdate = { transform -> scope.launch { container.settings.update(transform) } },
+                    onExportAll = {
+                        editorVm.showSheet(RootSheet.None)
+                        exportAll()
+                    },
+                    onAbout = { editorVm.showSheet(RootSheet.About) },
+                    onDismiss = { editorVm.showSheet(RootSheet.None) },
+                )
+            }
+
+            RootSheet.About -> {
+                AboutSheet(onDismiss = { editorVm.showSheet(RootSheet.Settings) })
+            }
+        }
 
         BackHandler(enabled = ui.findOpen) { closeFindBar() }
         BackHandler(enabled = selection.start != selection.end) { controller.collapseSelection() }

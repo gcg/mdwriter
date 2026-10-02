@@ -106,4 +106,38 @@
     <string name="library_export_all_notes">Export all notes…</string>
     <string name="library_export_done">Exported %1$d notes</string>
     <string name="library_export_failed">Export failed — %1$s</string>
+
+    <!-- Settings & About (T19, 02 §10) -->
+    <string name="settings_title">Settings</string>
+    <string name="settings_group_appearance">Appearance</string>
+    <string name="settings_group_text">Text</string>
+    <string name="settings_group_writing">Writing</string>
+    <string name="settings_group_files">Files</string>
+    <string name="settings_group_about">About</string>
+    <string name="settings_theme">Theme</string>
+    <string name="settings_theme_system">System</string>
+    <string name="settings_theme_light">Light</string>
+    <string name="settings_theme_dark">Dark</string>
+    <string name="settings_pure_black">Pure black in dark</string>
+    <string name="settings_typeface">Typeface</string>
+    <string name="settings_text_size">Text size</string>
+    <string name="settings_text_size_sample">The quick brown fox</string>
+    <string name="settings_line_length">Line length</string>
+    <string name="settings_focus">Focus</string>
+    <string name="settings_typewriter">Typewriter scrolling</string>
+    <string name="settings_word_count">Word count</string>
+    <string name="settings_swipe">Swipe to library &amp; preview</string>
+    <string name="settings_highlight">==highlight== syntax</string>
+    <string name="settings_new_note_ext">New note extension</string>
+    <string name="settings_show_ext">Show file extensions</string>
+    <string name="settings_export_all">Export all notes…</string>
+    <string name="settings_about">About mdwriter</string>
+    <string name="about_title">About mdwriter</string>
+    <string name="about_version">Version %1$s (%2$d)</string>
+    <string name="about_font_credit">iA Writer Duo, Quattro, Mono by Information Architects Inc., based on IBM Plex. SIL Open Font License 1.1</string>
+    <string name="about_license_ofl">SIL Open Font License 1.1</string>
+    <string name="about_license_commonmark">commonmark-java</string>
+    <string name="about_license_autolink">autolink-java</string>
+    <string name="about_license_apache">Apache License 2.0 (AndroidX, Kotlin)</string>
+    <string name="about_licenses_header">Licences</string>
 </resources>
