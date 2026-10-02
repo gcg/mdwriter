@@ -145,6 +145,7 @@ fun f() = x + 1
     fun forExtra(v: String?): String? =
         when (v) {
             "small" -> SMALL
+            "20k" -> generate(20_000)
             "100k" -> generate(100_000)
             "300k" -> generate(300_000)
             else -> null

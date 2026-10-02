@@ -82,6 +82,9 @@ class EditorController(
 
     private val hangRoom = HangRoomSpan(style)
 
+    /** T21 perf harness only: never attach the document-wide gutter span (measures its per-keystroke cost). */
+    var debugNoHangRoom = false
+
     /** Main thread only, after [install]; `null` before the first install. [Restyler] reads this to drive its reconcile. */
     internal var highlighter: MarkdownHighlighter? = null
         private set
@@ -219,7 +222,7 @@ class EditorController(
                     hl,
                     SpanFactory(PaintTextMeasurer(style)),
                     SpanMaterializer(style),
-                    hangRoom.takeIf { gutter > 0 },
+                    hangRoom.takeIf { gutter > 0 && !debugNoHangRoom },
                 )
             }
         val t1 = SystemClock.uptimeMillis()
@@ -420,9 +423,9 @@ class EditorController(
         val e = editText.text ?: return
         val gutter = style.gutterPx
         val attached = e.getSpanStart(hangRoom) >= 0
-        if (gutter > 0 && !attached) {
+        if (gutter > 0 && !debugNoHangRoom && !attached) {
             e.setSpan(hangRoom, 0, e.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
-        } else if (gutter == 0 && attached) {
+        } else if ((gutter == 0 || debugNoHangRoom) && attached) {
             e.removeSpan(hangRoom)
         }
         editText.reflowAll() // width changes already relayout; this makes a NEW gutter value take effect
