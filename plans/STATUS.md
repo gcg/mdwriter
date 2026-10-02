@@ -3663,3 +3663,35 @@ failed once in the full run and passed on rerun (timing flake, unrelated).
 sketch of §C; no separate `setHighlightSyntax` (the highlight flip is handled inside `setStyle`). 01 §6.2 not updated.
 **Known issues / follow-ups:** Acceptance 7 screenshots and the `MainActivity.onCreate` count (8) were not captured. Back handling
 inside the About sheet (glyph + `BackHandler`) is unverified on device.
+
+## T20 — Hardening (a11y, restore, huge files, IME, StrictMode, QA matrix) — PARTIAL — 2026-10-02
+**What changed:**
+- `util/PerfLog.kt` (events `open.request`, `open.loadingShown`, `open.installed`, `open.firstFrame`), `util/StrictModeUtil.kt`
+  (`permitDiskReads`, `permitDiskIo`); `MdWriterApp`: debug-only StrictMode thread + VM policy (log only, extends T18's).
+- Loading placeholder (`editorLoading` tag, shown after 30 ms) and a save-error line (`saveError` tag); both polite live regions.
+  `EditorViewModel` sets `loading = true` for every open.
+- Accessibility: "Find" custom action on the editor (Open library / Show preview / formatting actions already existed).
+- `ui/root/KeyboardShortcuts.kt`: `ShortcutCatalog` of the implemented shortcuts; `MainActivity.onProvideKeyboardShortcuts` uses it.
+- **Bug fixed — restore after `recreate()`:** the ViewModel outlives the Activity but the new editor was empty; `bindEditor` now
+  re-installs the last snapshot at the last caret/scroll. `setStyle` only re-anchors scroll on a real font/size/measure change
+  (it was overriding the restored scroll).
+- **Bug fixed — T19 regression:** `MdWriterRoot` read `settings` as a plain value captured by `movableContentOf`, so settings
+  changes never reached the editor screen (SwipeNavTest caught it). It is a delegated State read again.
+- `scripts/qa/gen-doc.sh`, `scripts/qa/push-doc.sh`, `plans/QA-matrix.md`.
+**Verification:** `make check` green; full `make test-device` green (84 tests, emulator). New device tests pass: `ImeCompositionTest` (5), `KeyboardShortcutsTest` (2),
+`RecreateRestoreTest` (2); JVM `ShortcutCatalogTest`. StrictMode: 0 violations after launch, typing, new note, preview, find and
+the drawer. Manifest audit matches the allowed list; no `announceForAccessibility`.
+StrictMode allowlist: `AppContainer` construction (`permitDiskIo`), `filesDir` + `PreviewWebViewHolder` in `MdWriterRoot`,
+first font-family build in `MdWriterTheme` (`permitDiskReads`). Export and the settings sheet were not exercised under StrictMode.
+**Deviations / not done:**
+- Most QA rows are marked `user` in `plans/QA-matrix.md`: TalkBack, font scale 1.3/2.0 visuals, large-screen and split screen, RTL,
+  force-RTL, nav modes, Gboard glide/voice, process kill, don't-keep-activities. `TouchTargetsTest` and the uiautomator
+  label/size dump checks were not run. No lint triage file was needed.
+- Huge files: the 1.2 MB open showed the placeholder at 76 ms; a clean 300k measurement was not obtained (UI automation
+  flaky). Opens are slow on the emulator (300k ~4.6 s, 1.2 MB ~12 s to install) — for T21. The 5 MB read-only, binary and
+  17 MB refusal paths were not exercised on a device.
+- The find-bar-restored-after-recreate assertion and a `findBar` test tag were not added.
+**Known issues / follow-ups:** `SelectionToolbarTest`/`InstallStylingDeviceTest`/`StyleSwitchTest` failed once in earlier full runs
+(huge files left in the debug app; scroll-anchor race, fixed by aborting the animated caret-reveal scroll) and pass now. RTL limitation (RTL paragraphs in an LTR column are
+offset by the gutter) not re-checked.
+**PerfLog events:** see above. **Missing shortcuts:** none added; only implemented ones are listed.

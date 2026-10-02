@@ -28,6 +28,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.movableContentOf
 import androidx.compose.runtime.mutableStateOf
@@ -80,6 +81,7 @@ import dev.mdwriter.ui.theme.WidthClass
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
 import dev.mdwriter.ui.theme.hairline
+import dev.mdwriter.util.permitDiskIo
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -108,8 +110,11 @@ fun MdWriterRoot(
     newIntents: Flow<RoutedIntent>,
     modifier: Modifier = Modifier,
 ) {
-    val loaded by container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
-    val settings = loaded ?: Settings()
+    val loadedState = container.settings.settings.collectAsStateWithLifecycle(initialValue = null)
+    val loaded = loadedState.value
+    // Delegated State read: closures captured once (movableContentOf below, shortcut handlers) must always see the
+    // CURRENT settings, never the ones of the composition that created them.
+    val settings by remember { derivedStateOf { loadedState.value ?: Settings() } }
     MdWriterTheme(themeMode = settings.themeMode, pureBlack = settings.pureBlack, font = settings.typeface) {
         // Compose the editor only after the FIRST real settings emission: a default-then-real double emission
         // would reflow the document twice at startup (T19).
@@ -149,8 +154,10 @@ fun MdWriterRoot(
         var paneVisible by rememberSaveable { mutableStateOf(true) }
 
         // ---- T16: the preview WebView (lazy, Activity context, never a ViewModel field — 01 §5) -----------------
-        val libraryRoot = remember(context) { File(context.filesDir, "library") }
-        val previewHolder = remember(context, libraryRoot) { PreviewWebViewHolder(context, libraryRoot) }
+        // filesDir resolution and the WebView provider's first init are framework-internal disk reads (T20).
+        val libraryRoot = remember(context) { permitDiskIo { File(context.filesDir, "library") } }
+        val previewHolder =
+            remember(context, libraryRoot) { permitDiskIo { PreviewWebViewHolder(context, libraryRoot) } }
         DisposableEffect(Unit) { onDispose { previewHolder.destroy() } }
 
         // Same tokens the editor itself uses (WriterColors/WriterFont/EditorMetrics) — the preview matches it.

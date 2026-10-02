@@ -319,10 +319,15 @@ class EditorController(
      * (the flag is fixed at its construction) that is `fullScan`ned before it is handed to the restyler. */
     fun setStyle(s: EditorStyle) {
         // Keep the first visible line where it is across a metrics change (font / size / line length).
+        // Only for a real metrics change: the first setStyle after install (same font/size/measure) must not fight
+        // the restored scroll position.
+        val metricsKey = Triple(s.font, s.textSizeStep, s.measureChars)
+        val metricsChanged = metricsKey != lastMetricsKey
+        lastMetricsKey = metricsKey
         val anchorOffset: Int
         val anchorDelta: Int
         val lay = editText.layout
-        if (lay != null) {
+        if (metricsChanged && lay != null) {
             val textY = (scrollView.scrollY - editText.totalPaddingTop).coerceAtLeast(0)
             val line = lay.getLineForVertical(textY)
             anchorOffset = lay.getLineStart(line)
@@ -346,6 +351,8 @@ class EditorController(
         if (anchorOffset >= 0) restoreScrollAnchor(anchorOffset, anchorDelta)
     }
 
+    private var lastMetricsKey = Triple(initialStyle.font, initialStyle.textSizeStep, initialStyle.measureChars)
+
     /** First visible line of the last [setStyle]; re-applied until the restyler settles, because span widths
      * (hang/indent) are re-measured incrementally and can still change line heights after the first relayout. */
     private var pendingAnchor: Pair<Int, Int>? = null
@@ -357,7 +364,11 @@ class EditorController(
         val l = editText.layout ?: return
         val line = l.getLineForOffset(offset.coerceAtMost(editText.length()))
         val y = (l.getLineTop(line) + editText.totalPaddingTop + delta).coerceAtLeast(0)
-        if (y != scrollView.scrollY) scrollView.scrollTo(0, y)
+        if (y != scrollView.scrollY) {
+            // TextView's caret-reveal uses ScrollView's animated scroll; scrollTo() alone would be overtaken by it.
+            scrollView.smoothScrollBy(0, 0)
+            scrollView.scrollTo(0, y)
+        }
     }
 
     private fun restoreScrollAnchor(
@@ -373,13 +384,15 @@ class EditorController(
                     applyAnchor(offset, delta)
                     // TextView's own "bring the caret into view" can run after this listener (the caret may have
                     // fallen off-screen at the new size); the anchor wins, so re-assert for a few frames.
-                    var frames = 8
+                    var frames = 0
                     scrollView.postOnAnimation(
                         object : Runnable {
                             override fun run() {
                                 if (pendingAnchor != offset to delta || scrollView.isUserScrolling) return
                                 applyAnchor(offset, delta)
-                                if (--frames > 0) {
+                                frames++
+                                // At least 8 frames, then until the restyler has settled (capped at ~1.5 s).
+                                if (frames < 8 || (!restyler.isIdle && frames < 90)) {
                                     scrollView.postOnAnimation(this)
                                 } else {
                                     pendingAnchor = null
