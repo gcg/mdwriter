@@ -7,9 +7,12 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -18,13 +21,21 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.dp
+import androidx.core.view.doOnPreDraw
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.mdwriter.R
+import dev.mdwriter.data.document.SaveState
 import dev.mdwriter.data.document.Snapshot
 import dev.mdwriter.data.library.DocRef
 import dev.mdwriter.data.settings.Settings
@@ -37,6 +48,8 @@ import dev.mdwriter.ui.find.FindBarHost
 import dev.mdwriter.ui.gesture.SwipeDir
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterTheme
+import dev.mdwriter.util.PerfLog
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
@@ -111,6 +124,8 @@ fun EditorScreen(
             when (e) {
                 is EditorEvent.Install -> {
                     controller.install(e.request)
+                    PerfLog.since("open.request", "open.installed")
+                    controller.editText.doOnPreDraw { PerfLog.since("open.request", "open.firstFrame") }
                     vm.onInstalled(controller.version)
                 }
 
@@ -210,9 +225,18 @@ fun EditorScreen(
             modifier = Modifier.fillMaxWidth(),
         )
         Box(Modifier.fillMaxWidth().weight(1f)) {
+            // Loading placeholder: only after 30 ms, so fast opens never flicker. The editor stays composed (alpha 0).
+            var showOpening by remember { mutableStateOf(false) }
+            LaunchedEffect(uiState.loading) {
+                showOpening = false
+                if (uiState.loading) {
+                    delay(30)
+                    showOpening = true
+                }
+            }
             EditorHost(
                 controller,
-                Modifier.fillMaxSize(),
+                Modifier.fillMaxSize().graphicsLayer { alpha = if (showOpening) 0f else 1f },
                 swipeEnabled = swipeEnabled,
                 swipeAccepts = swipeAccepts,
                 onSwipeArmedDown = onSwipeArmedDown,
@@ -220,6 +244,7 @@ fun EditorScreen(
                 onTopTap = { vm.chrome.onTopTap() },
                 onOpenLibrary = onOpenLibrary,
                 onOpenPreview = onPreview,
+                onOpenFind = vm::openFind,
                 statusProtectionVisible = !uiState.findOpen,
             )
             EditorChrome(
@@ -263,6 +288,30 @@ fun EditorScreen(
                 },
                 modifier = Modifier.align(Alignment.TopCenter),
             )
+            if (showOpening) {
+                SideEffect { PerfLog.since("open.request", "open.loadingShown") }
+                Text(
+                    stringResource(R.string.editor_opening),
+                    color = colors.textSecondary,
+                    modifier =
+                        Modifier
+                            .align(Alignment.Center)
+                            .testTag("editorLoading")
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
+            (uiState.save as? SaveState.Error)?.let { err ->
+                Text(
+                    stringResource(R.string.editor_save_failed, err.message),
+                    color = colors.danger,
+                    modifier =
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(16.dp)
+                            .testTag("saveError")
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                )
+            }
             uiState.conflict?.let { conflict ->
                 ConflictBanner(
                     conflict = conflict,

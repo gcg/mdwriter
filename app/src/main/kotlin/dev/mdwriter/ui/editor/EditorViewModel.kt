@@ -50,6 +50,7 @@ import dev.mdwriter.intents.ShareOut
 import dev.mdwriter.ui.preview.PreviewPage
 import dev.mdwriter.ui.preview.PreviewRenderer
 import dev.mdwriter.ui.preview.PreviewTheme
+import dev.mdwriter.util.PerfLog
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -127,6 +128,8 @@ class EditorViewModel(
 
     private var binding: EditorBinding? = null
     private var lastSnapshot: Snapshot? = null
+    private var lastCaret = 0
+    private var lastScrollY = 0
 
     /** True between `onStart()`/`onStop()` (STARTED lifecycle state) — gates [restartTreeWatch] (T14). */
     private var isForeground = false
@@ -225,11 +228,22 @@ class EditorViewModel(
     /** Called from `EditorScreen`'s `DisposableEffect` once [dev.mdwriter.editor.EditorController] exists. */
     fun bindEditor(b: EditorBinding) {
         binding = b
+        // A NEW editor (activity recreation: this ViewModel outlives it, but the controller is empty) while a
+        // document is already open: put the last known text back, at the last caret/scroll. The save is scheduled
+        // right away (dirty) since the buffer may be newer than disk.
+        val sess = session ?: return
+        val snap = lastSnapshot ?: return
+        pendingBeginDirty = true
+        _events.trySend(EditorEvent.Install(InstallRequest(snap.text, lastCaret, lastScrollY, sess.readOnly)))
     }
 
     /** `onDispose`: cache a final snapshot so a pending/future save never touches the disposed view. */
     fun unbindEditor() {
-        binding?.let { lastSnapshot = it.snapshot() }
+        binding?.let {
+            lastSnapshot = it.snapshot()
+            lastCaret = it.caret()
+            lastScrollY = it.scrollY()
+        }
         binding = null
     }
 
@@ -560,10 +574,13 @@ class EditorViewModel(
         selection: Int? = null,
         scrollY: Int? = null,
     ) {
+        PerfLog.mark("open.request")
+        uiInternal.update { it.copy(loading = true) }
         val loaded =
             try {
                 documents.load(ref)
             } catch (e: StorageException) {
+                uiInternal.update { it.copy(loading = false) }
                 _events.send(EditorEvent.Message(errorMessageFor(ref, e.error)))
                 return
             }

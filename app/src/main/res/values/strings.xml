@@ -140,4 +140,20 @@
     <string name="about_license_autolink">autolink-java</string>
     <string name="about_license_apache">Apache License 2.0 (AndroidX, Kotlin)</string>
     <string name="about_licenses_header">Licences</string>
+
+    <!-- Hardening (T20) -->
+    <string name="editor_opening">Opening…</string>
+    <string name="editor_save_failed">Couldn\'t save: %1$s</string>
+    <string name="kbd_file">File</string>
+    <string name="kbd_edit">Edit</string>
+    <string name="kbd_format">Format</string>
+    <string name="kbd_view">View</string>
+    <string name="kbd_bold">Bold</string>
+    <string name="kbd_italic">Italic</string>
+    <string name="kbd_link">Link</string>
+    <string name="kbd_code">Code</string>
+    <string name="kbd_strike">Strikethrough</string>
+    <string name="kbd_body_text">Body text</string>
+    <string name="kbd_heading">Heading %1$d</string>
+    <string name="a11y_find">Find</string>
 </resources>

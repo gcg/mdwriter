@@ -54,6 +54,7 @@ fun EditorHost(
     onTopTap: () -> Unit = {},
     onOpenLibrary: () -> Unit = {},
     onOpenPreview: () -> Unit = {},
+    onOpenFind: () -> Unit = {},
     statusProtectionVisible: Boolean = true,
 ) {
     val colors = LocalWriterColors.current
@@ -73,6 +74,16 @@ fun EditorHost(
         val id =
             ViewCompat.addAccessibilityAction(controller.editText, previewLabel) { _, _ ->
                 currentOnOpenPreview()
+                true
+            }
+        onDispose { ViewCompat.removeAccessibilityAction(controller.editText, id) }
+    }
+    val currentOnOpenFind by rememberUpdatedState(onOpenFind)
+    val findLabel = stringResource(R.string.a11y_find)
+    DisposableEffect(controller, findLabel) {
+        val id =
+            ViewCompat.addAccessibilityAction(controller.editText, findLabel) { _, _ ->
+                currentOnOpenFind()
                 true
             }
         onDispose { ViewCompat.removeAccessibilityAction(controller.editText, id) }

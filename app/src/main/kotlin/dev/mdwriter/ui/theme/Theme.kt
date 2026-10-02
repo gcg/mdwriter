@@ -15,6 +15,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
+import dev.mdwriter.util.permitDiskReads
 
 enum class ThemeMode { System, Light, Dark }
 
@@ -125,7 +126,8 @@ fun MdWriterTheme(
     // in configChanges). XML theme attributes do NOT update then, so never read colours from resources.
     val colors = writerColorsFor(themeMode, pureBlack, systemDark = isSystemInDarkTheme())
     val colorScheme = remember(colors) { colors.toMaterialColorScheme() }
-    val writerType = remember(font) { writerTypography(font.fontFamily) }
+    // First font-family build reads the bundled TTFs through Resources: a framework-internal disk read (T20).
+    val writerType = remember(font) { permitDiskReads { writerTypography(font.fontFamily) } }
     val materialType = remember(writerType) { writerType.toMaterialTypography() }
     val selectionColors =
         remember(colors) {

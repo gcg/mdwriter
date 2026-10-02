@@ -3,7 +3,6 @@ package dev.mdwriter
 import android.os.Bundle
 import android.view.KeyEvent
 import android.view.KeyboardShortcutGroup
-import android.view.KeyboardShortcutInfo
 import android.view.Menu
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -13,6 +12,7 @@ import dev.mdwriter.intents.RoutedIntent
 import dev.mdwriter.ui.root.AppCommand
 import dev.mdwriter.ui.root.AppShortcuts
 import dev.mdwriter.ui.root.MdWriterRoot
+import dev.mdwriter.ui.root.keyboardShortcutGroups
 import dev.mdwriter.util.Log
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -62,33 +62,7 @@ class MainActivity : ComponentActivity() {
         deviceId: Int,
     ) {
         super.onProvideKeyboardShortcuts(data, menu, deviceId)
-        data?.add(
-            KeyboardShortcutGroup(
-                getString(R.string.app_name),
-                listOf(
-                    KeyboardShortcutInfo(
-                        getString(R.string.shortcut_new_note),
-                        KeyEvent.KEYCODE_N,
-                        KeyEvent.META_CTRL_ON,
-                    ),
-                    KeyboardShortcutInfo(
-                        getString(R.string.shortcut_toggle_library),
-                        KeyEvent.KEYCODE_L,
-                        KeyEvent.META_CTRL_ON,
-                    ),
-                    KeyboardShortcutInfo(
-                        getString(R.string.shortcut_preview),
-                        KeyEvent.KEYCODE_R,
-                        KeyEvent.META_CTRL_ON,
-                    ),
-                    KeyboardShortcutInfo(
-                        getString(R.string.shortcut_find),
-                        KeyEvent.KEYCODE_F,
-                        KeyEvent.META_CTRL_ON,
-                    ),
-                ),
-            ),
-        )
+        data?.addAll(keyboardShortcutGroups())
     }
 
     private companion object {
