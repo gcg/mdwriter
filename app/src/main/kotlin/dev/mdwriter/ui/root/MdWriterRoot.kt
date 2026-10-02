@@ -2,6 +2,7 @@ package dev.mdwriter.ui.root
 
 import android.util.TypedValue
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -489,6 +490,9 @@ fun MdWriterRoot(
                 AboutSheet(onDismiss = { editorVm.showSheet(RootSheet.Settings) })
             }
         }
+
+        // Cold-start metric ("Fully drawn" in logcat, T21): the first document is installed.
+        ReportDrawnWhen { !ui.loading && ui.doc != null }
 
         BackHandler(enabled = ui.findOpen) { closeFindBar() }
         BackHandler(enabled = selection.start != selection.end) { controller.collapseSelection() }

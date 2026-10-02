@@ -1,5 +1,6 @@
 package dev.mdwriter.editor
 
+import android.text.SpannableString
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import dev.mdwriter.editor.spans.HangRoomSpan
@@ -22,14 +23,14 @@ fun buildStyledDocument(
     hangRoom: HangRoomSpan?,
 ): SpannableStringBuilder {
     hl.fullScan(text)
-    val ssb = SpannableStringBuilder(text)
     val specs = ArrayList<SpanSpec>(text.length / 8)
     factory.specsForLines(text, hl, 0, hl.lineCount, specs)
+    // SpannableString.setSpan is O(1) per span, while SpannableStringBuilder.setSpan degrades with the span count
+    // (quadratic: 3 s for 28k spans at 300k chars). The builder's copy constructor then copies all spans in bulk.
+    val tmp = SpannableString(text)
     for (spec in specs) {
-        ssb.setSpan(mat.create(spec), spec.start, spec.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        tmp.setSpan(mat.create(spec), spec.start, spec.end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
     }
-    if (hangRoom != null) {
-        ssb.setSpan(hangRoom, 0, ssb.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
-    }
-    return ssb
+    if (hangRoom != null) tmp.setSpan(hangRoom, 0, tmp.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
+    return SpannableStringBuilder(tmp)
 }

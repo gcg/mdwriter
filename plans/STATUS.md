@@ -3695,3 +3695,27 @@ first font-family build in `MdWriterTheme` (`permitDiskReads`). Export and the s
 (huge files left in the debug app; scroll-anchor race, fixed by aborting the animated caret-reveal scroll) and pass now. RTL limitation (RTL paragraphs in an LTR column are
 offset by the gutter) not re-checked.
 **PerfLog events:** see above. **Missing shortcuts:** none added; only implemented ones are listed.
+
+## T21 — Performance validation — PARTIAL (01 §9 per-keystroke budgets NOT met; STOP-AND-ASK) — 2026-10-02
+**What changed:** `util/PerfStats.kt` (+ `PerfStatsTest`), Restyler `hl.update` timer (debug), `ReportDrawnWhen` in `MdWriterRoot`,
+harness extras (`focus`, `extendSelection`, `label`, `noHang`, `sample=20k`, `PARTS|` per-keystroke breakdown line),
+`EditorController.debugNoHangRoom`, `StyledDocument.kt` bulk span install (SpannableString -> builder copy), `plans/perf-results.md`
+(all tables + the phone protocol).
+**Headline numbers (emulator, debug build speed-compiled; release for cold start):**
+| Budget (01 §9) | Result | Verdict |
+|---|---|---|
+| Per-keystroke 100k median <= 8 ms / p90 <= 12 | S1 11.9 / 20.9 | FAIL |
+| Per-keystroke 300k median <= 12 ms | S1 13.8 (p90 27.5) | FAIL |
+| `hl.update` p95 < 1 ms at 100k | ~2 ms (p50 ~1.2) | FAIL |
+| Open 100k warm <= 1 s | ~0.61 s (0.75 s before the fix) | PASS |
+| Cold start Fully drawn <= 800 ms | median 217 ms (release, install-dm profile) | PASS, no baseline profile needed |
+| (target) Jank 300k: < 10 % janky, p90 <= 20 ms | 0.23 %, p90 21 ms | met / 1 ms over |
+S2-S5 are in the same range as S1 (see perf-results.md). 300k open takes ~3.5 s (target 1.2 s, no budget).
+**Findings:** the per-keystroke cost is dominated by the `Editable.insert` call (~7 ms of ~12 at 100k); the restyler is ~1 ms of it;
+the rest is platform text-layout work. The hang-room gutter span is not the cause (removing it did not help). Measured numbers are
+2-3x the research reference (editor-engine §2.1: 2.1 / 5.4 / 6.8 ms). I did not find a local fix; a Perfetto/method trace is needed
+and anything touching the gutter span, `MdEditable` or highlighter threading is architectural.
+**Questions (STOP-AND-ASK):** accept these numbers / relax the 01 §9 budgets, or authorise a deeper (possibly architectural)
+investigation of the per-keystroke cost?
+**Notes:** the task-mandated release uninstall also removed an older release `dev.mdwriter` (different throwaway key) from the
+emulator; the emulator now has only `dev.mdwriter.debug`. `wm` density reset. Phone numbers: still to be taken by the user.

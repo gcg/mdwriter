@@ -11,6 +11,9 @@ import dev.mdwriter.editor.spans.SpanFactory
 import dev.mdwriter.editor.spans.SpanMaterializer
 import dev.mdwriter.editor.spans.SpanSpec
 import dev.mdwriter.markdown.MarkdownHighlighter
+import dev.mdwriter.util.PerfLog
+import dev.mdwriter.util.PerfStats
+import java.util.Locale
 
 /**
  * Live restyle: a [TextWatcher] marks lines dirty and schedules (at most) one [Choreographer] frame callback per
@@ -43,6 +46,7 @@ internal class Restyler(
     /** Invoked after a frame that changed at least one span (T15's focus overlay refresh hooks this). */
     var onRestyled: (() -> Unit)? = null
 
+    private val updateStats = PerfStats(24)
     private val dirty = DirtyRange()
     private var scheduled = false
     private var visibleDone = false
@@ -97,7 +101,22 @@ internal class Restyler(
         // depth should always be 1 (a single, non-reentrant replace()) and lengths should always be consistent
         // for it; the diffing update(text) overload is a defensive fallback only, never the expected path.
         val consistent = depth == 1 && hlLength - before + count == s.length
+        val t0 = if (PerfLog.enabled) System.nanoTime() else 0L
         val delta = if (consistent) hl.update(s, start, before, count) else hl.update(s)
+        if (PerfLog.enabled && updateStats.add(System.nanoTime() - t0)) {
+            android.util.Log.i(
+                PerfLog.TAG,
+                String.format(
+                    Locale.ROOT,
+                    "hl.update n=%d p50=%.3f p95=%.3f max=%.3f",
+                    updateStats.count,
+                    updateStats.percentileMs(0.5),
+                    updateStats.percentileMs(0.95),
+                    updateStats.percentileMs(1.0),
+                ),
+            )
+            updateStats.reset()
+        }
         hlLength = s.length
         dirty.onEdit(start, before, count, s.length)
         if (delta.full) dirty.markAll() else dirty.add(delta.startOffset, delta.endOffset)

@@ -44,6 +44,7 @@ class EditorPerfActivity : ComponentActivity() {
     lateinit var controller: EditorController
         private set
 
+    private var extendSelection = false
     private val main = Handler(Looper.getMainLooper())
     private val fmThread = HandlerThread("mdperf-fm").apply { start() }
     private val frames = Collections.synchronizedList(ArrayList<LongArray>())
@@ -75,7 +76,19 @@ class EditorPerfActivity : ComponentActivity() {
         val sampleExtra = intent.getStringExtra("sample")
         val literalText = intent.getStringExtra("text")
         val text = literalText ?: SampleDocs.forExtra(sampleExtra) ?: ""
-        val label = sampleExtra ?: "custom"
+        val sizeLabel = sampleExtra ?: "custom"
+        // T21: `label` (S1..S5) is appended to the RESULT line; `focus` (off|sentence|paragraph) sets Focus Mode;
+        // `extendSelection` (S3) makes every step grow the selection by one char instead of inserting text;
+        // `noHang` removes the document-wide gutter span (hang-room cost A/B).
+        val scenario = intent.getStringExtra("label")
+        val label = if (scenario == null) sizeLabel else "$sizeLabel|label=$scenario"
+        extendSelection = intent.getBooleanExtra("extendSelection", false)
+        controller.debugNoHangRoom = intent.getBooleanExtra("noHang", false)
+        intent.getStringExtra("focus")?.let { f ->
+            controller.focusMode =
+                dev.mdwriter.editor.FocusModeKind.entries
+                    .first { it.name.equals(f, ignoreCase = true) }
+        }
         val perfEdits = intent.getIntExtra("perfEdits", DEFAULT_EDITS)
         val vary = intent.getBooleanExtra("vary", false)
         val verifyLayout = intent.getBooleanExtra("verifyLayout", false)
@@ -128,6 +141,11 @@ class EditorPerfActivity : ComponentActivity() {
         vary: Boolean,
     ) {
         val mid = editable.length / 2
+        if (extendSelection) {
+            val et = controller.editText
+            if (n == 0) et.setSelection(mid, mid + 1) else et.setSelection(mid, mid + 1 + n)
+            return
+        }
         if (!vary) {
             editable.insert(mid, "a")
             return
@@ -160,6 +178,7 @@ class EditorPerfActivity : ComponentActivity() {
         window.removeOnFrameMetricsAvailableListener(fmListener)
         val snapshot = synchronized(frames) { frames.toList() }
         val workMs = ArrayList<Double>()
+        val parts = Array(6) { ArrayList<Double>() } // edit, anim, layout, draw, input, sync (ms)
         for (i in editVsync.indices) {
             val v = editVsync[i]
             if (v < 0) continue
@@ -167,8 +186,21 @@ class EditorPerfActivity : ComponentActivity() {
             if (abs(f[0] - v) > VSYNC_MATCH_TOLERANCE_NS) continue
             val uiNs = f[2] + f[3] + f[4] + f[5] + f[6]
             workMs.add((uiNs + editDur[i]) / 1_000_000.0)
+            parts[0].add(editDur[i] / 1e6)
+            parts[1].add(f[2] / 1e6)
+            parts[2].add(f[3] / 1e6)
+            parts[3].add(f[4] / 1e6)
+            parts[4].add(f[5] / 1e6)
+            parts[5].add(f[6] / 1e6)
         }
         if (workMs.isNotEmpty()) {
+            val names = listOf("edit", "anim", "layout", "draw", "input", "sync")
+            Log.i(TAG) {
+                "PARTS|$label|" +
+                    names.indices.joinToString("|") { i ->
+                        names[i] + "=" + "%.2f".format(Locale.ROOT, parts[i].sorted()[parts[i].size / 2])
+                    }
+            }
             val sorted = workMs.sorted()
             val med = sorted[sorted.size / 2]
             val p90 = sorted[((sorted.size - 1) * 0.9).roundToInt()]
