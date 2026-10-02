@@ -7,8 +7,7 @@ import dev.mdwriter.data.storage.FileStat
 import dev.mdwriter.editor.InstallRequest
 import dev.mdwriter.markdown.Stats
 
-/** 01 §6.4. `settingsOpen`/`RootSheet` stay minimal here (T19 wires the real sheet); `stats` is always `null`
- * until T15. */
+/** 01 §6.4. `settingsOpen` is true while any [RootSheet] other than `None` is showing (T19). */
 data class EditorUiState(
     val doc: DocRef?,
     val title: String,
@@ -75,3 +74,6 @@ sealed interface EditorEvent {
         val intent: Intent,
     ) : EditorEvent
 }
+
+/** T19: the root bottom sheets. About returns to Settings on dismiss; Settings returns to nothing. */
+enum class RootSheet { None, Settings, About }

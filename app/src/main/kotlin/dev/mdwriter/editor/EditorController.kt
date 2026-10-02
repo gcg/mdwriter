@@ -187,6 +187,7 @@ class EditorController(
 
     init {
         scrollView.onGeometryChanged = { syncHangRoom() }
+        restyler.onRestyled = { onRestyledAnchor() }
         scrollView.onScrolled = { y, dy -> _scrollChanges.tryEmit(ScrollChange(y, dy)) }
         editText.addTextChangedListener(restyler)
         editText.addTextChangedListener(mdUndo) // AFTER the restyler's (rule: restyle reacts to the same edits)
@@ -317,6 +318,19 @@ class EditorController(
      * relayout. A [EditorStyle.highlightSyntax] flip additionally needs a brand-new [MarkdownHighlighter]
      * (the flag is fixed at its construction) that is `fullScan`ned before it is handed to the restyler. */
     fun setStyle(s: EditorStyle) {
+        // Keep the first visible line where it is across a metrics change (font / size / line length).
+        val anchorOffset: Int
+        val anchorDelta: Int
+        val lay = editText.layout
+        if (lay != null) {
+            val textY = (scrollView.scrollY - editText.totalPaddingTop).coerceAtLeast(0)
+            val line = lay.getLineForVertical(textY)
+            anchorOffset = lay.getLineStart(line)
+            anchorDelta = scrollView.scrollY - (lay.getLineTop(line) + editText.totalPaddingTop)
+        } else {
+            anchorOffset = -1
+            anchorDelta = 0
+        }
         editText.applyColors(s.colors)
         editText.typeface = s.fonts.regular
         scrollView.applyGeometry() // also invokes syncHangRoom via onGeometryChanged (marks everything dirty too)
@@ -329,6 +343,63 @@ class EditorController(
             restyler.highlighter = hl
         }
         restyler.markAllDirty()
+        if (anchorOffset >= 0) restoreScrollAnchor(anchorOffset, anchorDelta)
+    }
+
+    /** First visible line of the last [setStyle]; re-applied until the restyler settles, because span widths
+     * (hang/indent) are re-measured incrementally and can still change line heights after the first relayout. */
+    private var pendingAnchor: Pair<Int, Int>? = null
+
+    private fun applyAnchor(
+        offset: Int,
+        delta: Int,
+    ) {
+        val l = editText.layout ?: return
+        val line = l.getLineForOffset(offset.coerceAtMost(editText.length()))
+        val y = (l.getLineTop(line) + editText.totalPaddingTop + delta).coerceAtLeast(0)
+        if (y != scrollView.scrollY) scrollView.scrollTo(0, y)
+    }
+
+    private fun restoreScrollAnchor(
+        offset: Int,
+        delta: Int,
+    ) {
+        pendingAnchor = offset to delta
+        scrollView.viewTreeObserver.addOnPreDrawListener(
+            object : android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw(): Boolean {
+                    val tvo = scrollView.viewTreeObserver
+                    if (tvo.isAlive) tvo.removeOnPreDrawListener(this)
+                    applyAnchor(offset, delta)
+                    // TextView's own "bring the caret into view" can run after this listener (the caret may have
+                    // fallen off-screen at the new size); the anchor wins, so re-assert for a few frames.
+                    var frames = 8
+                    scrollView.postOnAnimation(
+                        object : Runnable {
+                            override fun run() {
+                                if (pendingAnchor != offset to delta || scrollView.isUserScrolling) return
+                                applyAnchor(offset, delta)
+                                if (--frames > 0) {
+                                    scrollView.postOnAnimation(this)
+                                } else {
+                                    pendingAnchor = null
+                                }
+                            }
+                        },
+                    )
+                    return true
+                }
+            },
+        )
+    }
+
+    private fun onRestyledAnchor() {
+        val (offset, delta) = pendingAnchor ?: return
+        if (scrollView.isUserScrolling) {
+            pendingAnchor = null
+            return
+        }
+        applyAnchor(offset, delta)
     }
 
     /** Keeps the whole-document [HangRoomSpan] in sync with the current gutter (≥ 600 dp only, 02 §3). */

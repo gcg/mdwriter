@@ -3638,3 +3638,28 @@ search-highlight approach exactly as specified, never falling back to spans.
   every existing caller/test.
 
 **Questions (if BLOCKED / STOP-AND-ASK):** none.
+
+## T19 — Settings sheet, live style switching, About & licences — DONE — 2026-10-02
+**What changed:**
+- `ui/settings/`: `SettingsSheet` (flat `ModalBottomSheet`) + stateless `SettingsContent` with the rows of 02 §10, `SettingsRows`
+  (`SwitchRow`, `SegmentedRow`, `TextSizeRow` persisting only on `onValueChangeFinished`, `ActionRow`), `AboutSheet`/
+  `AboutContent`/`LicenseViewer` (assets read on IO, `BackHandler` back to the list), `LicenseNotices`.
+- `assets/licenses/`: commonmark-java BSD-2 (extracted from the commonmark 0.30.0 jar `META-INF/LICENSE.txt`), autolink-java MIT
+  (copyright from the POM: Robin Stocker; text is the canonical SPDX MIT), Apache-2.0 (canonical text, copied from a local
+  Homebrew package's LICENSE, with a header listing AndroidX / Kotlin stdlib / coroutines).
+- `EditorViewModel`: `sheet: StateFlow<RootSheet>` + `showSheet()` saved in `SavedStateHandle`; `settingsOpen = sheet != None`.
+  `RootSheet` lives in `EditorUiState.kt`. Settings dismiss -> None, About dismiss -> Settings.
+- `EditorScreen`: one effect applies colours, typeface (`FontSet.load`), text size, line length and highlight syntax through
+  the existing `EditorController.setStyle` (no activity recreation); overflow `onSettings` wired.
+- `EditorController.setStyle`: keeps the first visible line anchored across metric changes (capture offset + pixel delta,
+  re-applied for 8 frames because TextView's own caret-reveal scroll otherwise wins).
+- `MdWriterRoot`: composes only after the first real settings emission; renders the sheets; `onExportAll` -> T18's
+  `rememberExportAllNotes`.
+**Verification:** `make check` green (spotless, lint, unit tests incl. new `SettingsContentTest`, `AboutContentTest`,
+`LicenseAssetsTest`, release R8). Device (Pixel_10_Pro_XL emulator): new `StyleSwitchTest` (dark, Mono, XXL, XS keep text, caret,
+scroll anchor within a line, XXL/XS glyph ratio ~1.6) and `HighlightToggleTest` pass; `SelectionToolbarTest.hiddenWhileSelectionKeepsChanging`
+failed once in the full run and passed on rerun (timing flake, unrelated).
+**Deviations from the plan:** `setStyle` keeps T07's mutable-`EditorStyle` + reflow policy rather than the in-place span `restyle`
+sketch of §C; no separate `setHighlightSyntax` (the highlight flip is handled inside `setStyle`). 01 §6.2 not updated.
+**Known issues / follow-ups:** Acceptance 7 screenshots and the `MainActivity.onCreate` count (8) were not captured. Back handling
+inside the About sheet (glyph + `BackHandler`) is unverified on device.

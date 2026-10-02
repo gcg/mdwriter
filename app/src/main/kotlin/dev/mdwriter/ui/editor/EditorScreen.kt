@@ -31,6 +31,7 @@ import dev.mdwriter.data.settings.Settings
 import dev.mdwriter.editor.EditorController
 import dev.mdwriter.editor.FocusModeKind
 import dev.mdwriter.editor.StatsInput
+import dev.mdwriter.editor.spans.FontSet
 import dev.mdwriter.editor.spans.toEditorColors
 import dev.mdwriter.ui.find.FindBarHost
 import dev.mdwriter.ui.gesture.SwipeDir
@@ -62,6 +63,7 @@ fun EditorScreen(
     onOpenLibrary: () -> Unit,
     libraryIcon: Int,
     onNewNote: () -> Unit,
+    onSettings: () -> Unit,
     onPreview: () -> Unit,
     onCloseFind: () -> Unit,
     swipeEnabled: () -> Boolean,
@@ -158,8 +160,25 @@ fun EditorScreen(
         )
         onDispose { vm.unbindEditor() }
     }
-    LaunchedEffect(colors) {
-        controller.setStyle(controller.style.also { it.colors = colors.toEditorColors() })
+    // T19: every appearance setting applies live, in place — never recreating the activity (01 §6.2 setStyle).
+    LaunchedEffect(
+        controller,
+        colors,
+        settings.typeface,
+        settings.textSizeStep,
+        settings.lineLength,
+        settings.highlightSyntax,
+    ) {
+        val st = controller.style
+        st.colors = colors.toEditorColors()
+        if (st.font != settings.typeface) {
+            st.font = settings.typeface
+            st.fonts = FontSet.load(context, settings.typeface)
+        }
+        st.textSizeStep = settings.textSizeStep
+        st.measureChars = settings.lineLength
+        st.highlightSyntax = settings.highlightSyntax
+        controller.setStyle(st)
     }
     LifecycleEventEffect(Lifecycle.Event.ON_START) { vm.onStart() }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { vm.onStop() }
@@ -220,6 +239,7 @@ fun EditorScreen(
                         onFind = vm::openFind,
                         onShare = vm::shareCurrent,
                         onNewNote = onNewNote,
+                        onSettings = onSettings,
                         onPreview = onPreview,
                         focus =
                             OverflowChoice(

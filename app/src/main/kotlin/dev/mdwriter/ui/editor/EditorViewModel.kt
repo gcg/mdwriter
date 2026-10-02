@@ -147,9 +147,20 @@ class EditorViewModel(
      * signals, combined into [uiState.chromeVisible][EditorUiState.chromeVisible]. */
     val chrome = ChromeVisibility(viewModelScope)
 
+    private val sheetInternal =
+        MutableStateFlow(RootSheet.entries.getOrElse(handle[KEY_SHEET] ?: 0) { RootSheet.None })
+
+    /** T19: which root bottom sheet is showing; survives process death via [SavedStateHandle]. */
+    val sheet: StateFlow<RootSheet> = sheetInternal.asStateFlow()
+
+    fun showSheet(sheet: RootSheet) {
+        sheetInternal.value = sheet
+        handle[KEY_SHEET] = sheet.ordinal
+    }
+
     val uiState: StateFlow<EditorUiState> =
-        combine(uiInternal, autosave.state, chrome.visible) { u, s, chromeVisible ->
-            u.copy(save = s, chromeVisible = chromeVisible)
+        combine(uiInternal, autosave.state, chrome.visible, sheetInternal) { u, s, chromeVisible, sheet ->
+            u.copy(save = s, chromeVisible = chromeVisible, settingsOpen = sheet != RootSheet.None)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), EditorUiState.INITIAL)
 
     private val _events = Channel<EditorEvent>(Channel.BUFFERED)
@@ -802,6 +813,7 @@ class EditorViewModel(
         private const val KEY_SEL_START = "selStart"
         private const val KEY_SCROLL_Y = "scrollY"
         private const val KEY_PREVIEW_OPEN = "previewOpen"
+        private const val KEY_SHEET = "rootSheet"
         private const val TREE_WATCH_DEBOUNCE_MS = 300L
 
         val Factory: ViewModelProvider.Factory =
