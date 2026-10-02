@@ -8,6 +8,45 @@ and install it yourself with `make install`.
 > `keystore.properties`. Every future update must be signed with it; without it the only way to update is
 > uninstalling, which deletes the notes stored inside the app. `make keystore-info` shows where they are.
 
+## Features
+
+- Live-styled Markdown: headings, emphasis, code, quotes, lists, tasks and links are styled as you type; the Markdown
+  markers stay visible but quiet.
+- Focus mode (dim everything but the current sentence or paragraph), typewriter scrolling, and an optional word count.
+- Preview: a clean rendered view of the note, fully offline.
+- Find and replace.
+- A library of notes in the app, plus linked folders anywhere on the phone (your files stay in your folder).
+- Share a note, open `.md`/`.txt` files from other apps, export all notes as a zip.
+- Light, dark and pure-black themes; three typefaces (Duo, Quattro, Mono); six text sizes.
+
+## Gestures
+
+- Swipe from the start edge toward the end (left to right in LTR) to open the **library**; swipe the other way to open the
+  **preview**. The swipes never fight text selection, cursor drags or vertical scrolling. Turn them off in Settings
+  ("Swipe to library & preview").
+- Select text to get the formatting pill (bold, italic, link, code, headings, lists, ...).
+- Tap a task box (`- [ ]`) to toggle it.
+- Tap near the top of the screen to bring the two corner buttons back; they fade out while you type.
+- **Back** closes things in this order: keyboard, selection, find bar, library (search, then up a folder, then close),
+  preview, then leaves the app.
+
+## Keyboard shortcuts
+
+With a hardware keyboard (press **Meta+/** in the app to see the list).
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+N | New note |
+| Ctrl+L | Toggle the library |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / Redo |
+| Ctrl+F | Find |
+| Ctrl+B / Ctrl+I | Bold / Italic |
+| Ctrl+K | Link |
+| Ctrl+Shift+C | Code |
+| Ctrl+Shift+X | Strikethrough |
+| Ctrl+0 ... Ctrl+6 | Body text / Heading 1-6 |
+| Ctrl+R | Preview |
+
 ## Install on your phone
 
 mdwriter runs on **Android 16 or 17**. You install it from this Mac with one command; no Play Store,
@@ -68,6 +107,47 @@ running `make install`.
 | Samsung: USB commands ignored | Settings > Security and privacy > **Auto Blocker** blocks USB commands; turn it off while installing. |
 | `offline` device | Unplug/replug, or restart adb: `~/Library/Android/sdk/platform-tools/adb kill-server`. |
 | `no JDK 17-26 found` | Install Android Studio, or `brew install openjdk@21`. Gradle cannot run on Java 27. |
+
+## Updating
+
+`git pull && make install`. Your notes are kept: each build has a higher version number, so it is an in-place update.
+Never uninstall the app to "reinstall" it: that deletes the notes stored inside it.
+
+## Back up your signing key
+
+`make keystore-info` shows where the key is and its fingerprint. Copy the whole `~/.config/mdwriter/` folder to an
+encrypted backup. Without that key you cannot update the app without uninstalling it, which deletes the notes stored
+inside the app.
+
+## Where your notes live
+
+- **In-app library:** app-private storage, invisible to other apps, removed when the app is uninstalled. Auto Backup is on
+  for the notes (`library/`) and settings (`datastore/`): Google backup (only on devices with encrypted backup) and
+  device-to-device transfer may copy them. Recovery copies and the trash are never backed up.
+- **Linked folders:** the files stay in your own folder; mdwriter only edits the notes you open.
+- The debug app `dev.mdwriter.debug` is a separate app with separate notes. `make backup-notes` copies the debug app's
+  notes only; the release app's private files cannot be read over adb.
+
+## Export
+
+- **Export all notes:** Settings (or long-press "On this device" in the library) creates a `.zip` through the system file picker.
+- **Share** a single note from the overflow menu or the preview.
+- **Open** `.md`/`.txt` files from other apps ("Open with" / "Share to" mdwriter).
+
+## Privacy
+
+- No permissions at all (the only entry in `aapt2 dump permissions` is the androidx signature-only receiver permission).
+- No network: there is no INTERNET permission, and the preview renders offline.
+- No accounts, no analytics, no crash reporting.
+
+## Known limitations
+
+- Per-keystroke latency on very large notes is above the original budgets on the emulator (100k characters: about
+  12 ms median); opening a 300k-character note takes about 3.5 s. See `plans/perf-results.md`.
+- Right-to-left paragraphs in a left-to-right column are offset by the gutter on wide screens.
+- Notes over 5 MB open read-only; files over 16 MB and non-text files are refused.
+- Several accessibility, large-screen, RTL and keyboard checks were never run on a real phone; see `plans/QA-matrix.md`
+  (rows marked `user`).
 
 ## Development
 

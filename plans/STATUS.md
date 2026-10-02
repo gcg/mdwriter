@@ -3719,3 +3719,51 @@ and anything touching the gutter span, `MdEditable` or highlighter threading is 
 investigation of the per-keystroke cost?
 **Notes:** the task-mandated release uninstall also removed an older release `dev.mdwriter` (different throwaway key) from the
 emulator; the emulator now has only `dev.mdwriter.debug`. `wm` density reset. Phone numbers: still to be taken by the user.
+
+## T22 — Final QA, README, handoff — PARTIAL — 2026-10-02
+**What changed:** README (Features, Gestures, Keyboard shortcuts, Updating, Back up your signing key, Where your notes live, Export,
+Privacy, Known limitations; the install section is byte-identical to build.md §7), `plans/QA-matrix.md` (T22 column, iA-isms,
+DS-*, spot-check), this entry and the handoff. No app code changed in T22.
+**Verification:** `make check` green; instrumented suite 84 tests green; JVM tests: 250 (`:core:markdown`) + 537 (`:app`), 0 failures.
+- Release APK: 4,017,067 bytes (3.8 MiB), under the 6 MiB target. `aapt2 dump permissions`: only the androidx signature-only receiver permission.
+- DS-07 pass (key-B install refused, exit 2, notes kept), DS-08 pass (key-A update keeps notes), DS-09 pass (export zip entries = library).
+  Throwaway keys under `/tmp/mdwriter-qa-key*` were deleted; the release app was uninstalled from the emulator (`DEVICE=emulator-5554` only).
+- iA-isms: page colours `#F7F7F7`/`#1A1A1A` and the blue caret `#00B2FF` sampled; items 8-14 pass via tests/screenshots; others partial/user (see matrix).
+- QA matrix: 42 rows; 27 are `user` (see HANDOFF); no row is `fail`.
+**Deviations:** the task says not to push; the user's workflow is branch -> PR -> merge per task, so this task is pushed and merged. No tag.
+**Known issues / not verified:**
+- DS-01 is partial: `adb shell input text` could not reliably inject typing, so the kill-during-typing case was not truly exercised (10 kills: no corrupt/empty file, no temp files, no crash).
+- DS-02..DS-06 (rename while dirty, delete+undo, linked-folder loss/unlink, external-change conflict) were not run on a device; they are covered by the unit tests listed in the matrix. No data-loss failure was observed.
+- Per-keystroke latency misses the original 01 §9 budgets on the emulator (accepted by the user in T21); 300k-character open ~3.5 s.
+- RTL paragraphs in an LTR column are offset by the gutter (T20); the many `user` rows (TalkBack, RTL, large screens, nav modes, Gboard) were never run.
+**Perf headline (T21):** keystroke 100k 11.9 / 20.9 ms (median / p90), open 100k ~610 ms, cold start 217 ms.
+
+## HANDOFF TO THE HUMAN
+State: all 22 tasks done. Tests: 787 JVM + 84 instrumented green. APK 3.8 MB. Perf (emulator): keystroke 100k
+11.9/20.9 ms, open 100k 610 ms, cold start 217 ms. Known issues: per-keystroke latency above the original budgets
+on the emulator (accepted); 300k-character notes open in ~3.5 s; RTL paragraphs offset by the gutter on wide screens;
+DS-01 kill-during-typing and DS-02..06 not exercised on a device; A11Y-01, A11Y-03, A11Y-04, A11Y-05, A11Y-06, LS-01, LS-02, LS-03, LS-04, LS-05, LS-06, CFG-03, CFG-04, CFG-05, CFG-06, BIG-03, BIG-04, BIG-05, RTL-01, RTL-02, RTL-03, RTL-04, IME-01, IME-03, IME-04, NAV-01, NAV-02 not run.
+
+The agent never installed anything on your phone. To install it yourself:
+1. On the Mac: `make doctor`, and fix anything it reports (JDK 21, Android SDK).
+2. On the phone: Settings › About phone › tap "Build number" 7× → Settings › System › Developer options →
+   turn on **USB debugging** (or **Wireless debugging**, then `make pair HOST=<ip:port> CODE=<code>` and
+   `make connect HOST=<ip:port>`).
+3. Connect the phone and accept the "Allow USB debugging" prompt. `make devices` must list it.
+4. `make install` (add `DEVICE=<serial>` if an emulator is also running). The first run creates your signing key in
+   `~/.config/mdwriter/`, installs the release build + baseline profile, and launches mdwriter.
+5. **Back up the key now:** `make keystore-info` (shows path + SHA-256), then copy the whole `~/.config/mdwriter/`
+   folder to an encrypted backup. Without it you cannot update the app without uninstalling it, which deletes the
+   notes stored inside the app.
+6. First-run checklist on the phone:
+   - [ ] The welcome note opens. Create a new note (pencil glyph in the library), type `# Test`, and the heading grows.
+   - [ ] Swipe across the text start→end to open the library; swipe or Back to close it.
+   - [ ] Select a word to see the pill; tap Bold, and `**…**` appears.
+   - [ ] Swipe end→start to open the preview; Back closes it.
+   - [ ] Library › "Use a folder…" › create/pick `Documents/Notes`, then create a note there and see it in the Files app.
+   - [ ] Overflow › "Export all notes" › save the zip to Downloads, then open it in Files.
+   - [ ] Settings sheet: switch theme, font and size. Rotate the phone; the text and caret are unchanged.
+   - [ ] Items the agent could not test on the emulator: A11Y-01, A11Y-03, A11Y-04, A11Y-05, A11Y-06, LS-01, LS-02, LS-03, LS-04, LS-05, LS-06, CFG-03, CFG-04, CFG-05, CFG-06, BIG-03, BIG-04, BIG-05, RTL-01, RTL-02, RTL-03, RTL-04, IME-01, IME-03, IME-04, NAV-01, NAV-02 (see `plans/QA-matrix.md`: TalkBack, font scale, large screens, RTL, navigation modes, Gboard glide and voice).
+7. Updating later: `git pull && make install`. Notes are kept. Do not run `make uninstall` unless you exported your notes.
+8. Optional: measure on your phone with the protocol in `plans/perf-results.md` ("Run it on your phone").
+9. If something breaks: run `make logcat` while reproducing it, and keep the output.
