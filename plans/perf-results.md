@@ -61,7 +61,7 @@ follow-up (not architectural, but not done here): reduce the per-span cost furth
 The loading placeholder (T20) shows within ~30 ms of the request.
 
 ## 6. Cold start (release build, `speed-profile`, 11 launches, first dropped)
-- `pm art dump dev.mdwriter`: `status=speed-profile reason=install-dm` (the bundled profile is installed).
+- `pm art dump me.gcg.mdwriter`: `status=speed-profile reason=install-dm` (the bundled profile is installed).
 - `am start -W` TotalTime: 100-151 ms (median ~118 ms).
 - `Fully drawn` (via `ReportDrawnWhen`): 166-270 ms, median **217 ms** (budget <= 800 ms: **PASS**).
 - Baseline profile module: **not needed** (median 217 ms). Not added.
@@ -77,16 +77,16 @@ The loading placeholder (T20) shows within ~30 ms of the request.
 
 ## 9. Run it on your phone (for the user; the agent does not do this)
 1. `make devices`, then `make install-debug DEVICE=<phone-serial>` and
-   `adb -s <phone-serial> shell cmd package compile -m speed -f dev.mdwriter.debug`.
+   `adb -s <phone-serial> shell cmd package compile -m speed -f me.gcg.mdwriter.debug`.
 2. Push documents: `scripts/qa/gen-doc.sh 100000 > /tmp/big-100k.md && scripts/qa/push-doc.sh <phone-serial> /tmp/big-100k.md`
    (same for 300000).
-3. Per-keystroke: `adb -s <phone-serial> shell am start -S -W -n dev.mdwriter.debug/dev.mdwriter.debug.EditorPerfActivity
+3. Per-keystroke: `adb -s <phone-serial> shell am start -S -W -n me.gcg.mdwriter.debug/dev.mdwriter.debug.EditorPerfActivity
    --es sample 100k --ei perfEdits 24 --ez vary true --es label S1`, wait ~15 s, then
    `adb -s <phone-serial> logcat -d -s MDPERF | grep -E 'RESULT|PARTS'` and `logcat -s MdPerf | grep hl.update`.
    Extras: `--es focus sentence`, `--ez extendSelection true`, `--ez noHang true`. For S4/S5 use `wm density 320` / `240`
    and reset with `wm density reset`.
 4. Cold start: `make install DEVICE=<phone-serial>` (uses your real key in `~/.config/mdwriter`; never uninstall afterwards,
-   it deletes notes), then 10x `am force-stop dev.mdwriter; am start -W -n dev.mdwriter/.MainActivity` and read
-   `logcat -d | grep "Fully drawn dev.mdwriter"`.
+   it deletes notes), then 10x `am force-stop me.gcg.mdwriter; am start -W -n me.gcg.mdwriter/.MainActivity` and read
+   `logcat -d | grep "Fully drawn me.gcg.mdwriter"`.
 5. Paste the RESULT lines into a new "Phone" column here. Remove the debug app with `make uninstall-debug DEVICE=<phone-serial>`
    (a separate app; the real notes are safe).

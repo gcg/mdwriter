@@ -62,7 +62,7 @@ android {
 
     defaultConfig {
         // The Makefile parses this line: keep applicationId a literal string on ONE line.
-        applicationId = "dev.mdwriter"
+        applicationId = "me.gcg.mdwriter"
         minSdk { version = release(36) }
         targetSdk { version = release(37) }
         versionCode = 1 // debug stays at 1 (keeps debug builds incremental); release is set in androidComponents below

@@ -9,7 +9,7 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class IntentRouterTest {
-    private val ownAuthority = "dev.mdwriter.debug.files"
+    private val ownAuthority = "me.gcg.mdwriter.debug.files"
 
     @Test
     fun viewMarkdownContent() {

@@ -16,7 +16,7 @@ MODULE := app
 # applicationId is read from app/build.gradle.kts (single source of truth).
 APP_ID := $(shell sed -n 's/^[[:space:]]*applicationId[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' $(MODULE)/build.gradle.kts 2>/dev/null | head -n 1)
 ifeq ($(APP_ID),)
-APP_ID := dev.mdwriter
+APP_ID := me.gcg.mdwriter
 endif
 APP_ID_DEBUG := $(APP_ID).debug
 RELEASE_APK  := $(MODULE)/build/outputs/apk/release/$(MODULE)-release.apk
