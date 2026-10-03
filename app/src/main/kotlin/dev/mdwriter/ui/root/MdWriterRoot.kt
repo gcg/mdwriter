@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.union
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -45,6 +46,7 @@ import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -71,6 +73,7 @@ import dev.mdwriter.ui.library.LibraryPane
 import dev.mdwriter.ui.library.LibraryUiState
 import dev.mdwriter.ui.library.LibraryViewModel
 import dev.mdwriter.ui.library.rememberExportAllNotes
+import dev.mdwriter.ui.preview.PreviewGlyphRowHeight
 import dev.mdwriter.ui.preview.PreviewOverlay
 import dev.mdwriter.ui.preview.PreviewThemes
 import dev.mdwriter.ui.preview.PreviewWebViewHolder
@@ -168,8 +171,25 @@ fun MdWriterRoot(
         // observe — 01 §8 keeps this Activity alive across that change via configChanges).
         val fontScale = LocalConfiguration.current.fontScale
         val widthClass = controller.style.widthClass
+        // The preview WebView draws edge to edge, but its close/share row sits below the status bar (56 dp tall,
+        // PreviewOverlay): the page must start below both, or the title slides under the close glyph.
+        val previewTopInsetDp =
+            with(LocalDensity.current) {
+                WindowInsets.safeDrawing
+                    .getTop(this)
+                    .toDp()
+                    .value
+            }
         val previewTheme =
-            remember(colors, settings.typeface, settings.textSizeStep, settings.lineLength, widthClass, fontScale) {
+            remember(
+                colors,
+                settings.typeface,
+                settings.textSizeStep,
+                settings.lineLength,
+                widthClass,
+                fontScale,
+                previewTopInsetDp,
+            ) {
                 val dm = context.resources.displayMetrics
                 val bodySizeSp = EditorMetrics.bodyTextSizeSp(settings.textSizeStep, widthClass)
                 val bodyCssPx =
@@ -181,7 +201,7 @@ fun MdWriterRoot(
                     bodyCssPx = bodyCssPx,
                     measureChars = if (widthClass == WidthClass.Compact) null else settings.lineLength,
                     sideDp = EditorMetrics.sideMarginMin(widthClass).value,
-                    topDp = EditorMetrics.topRoom(widthClass).value,
+                    topDp = previewTopInsetDp + PreviewGlyphRowHeight.value + EditorMetrics.topRoom(widthClass).value,
                     density = dm.density,
                 )
             }

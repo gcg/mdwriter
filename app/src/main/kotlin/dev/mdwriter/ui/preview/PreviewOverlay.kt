@@ -133,7 +133,7 @@ fun PreviewOverlay(
                     .fillMaxWidth()
                     .windowInsetsPadding(
                         WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
-                    ).height(56.dp),
+                    ).height(PreviewGlyphRowHeight),
             ) {
                 Glyph(
                     icon = R.drawable.ic_arrow_back,
@@ -178,3 +178,6 @@ private fun Glyph(
         )
     }
 }
+
+/** Height of the close/share glyph row; the page's top padding includes it (`MdWriterRoot`'s preview theme). */
+val PreviewGlyphRowHeight = 56.dp
