@@ -1,56 +1,91 @@
 # mdwriter
 
-A private, offline Markdown editor for Android 16/17 in the spirit of iA Writer. No accounts, no
-network permission — your notes never leave the phone. This is a personal, sideloaded app: you build
-and install it yourself with `make install`.
+**A quiet, private Markdown editor for Android.** Open it and write. No accounts, no cloud, no ads, no
+network access at all: your notes never leave your phone unless you share them.
 
-> **Back up your signing key.** The first `make install` creates `~/.config/mdwriter/release.jks` and
-> `keystore.properties`. Every future update must be signed with it; without it the only way to update is
-> uninstalling, which deletes the notes stored inside the app. `make keystore-info` shows where they are.
+<p align="center">
+  <img src="docs/screenshots/01-editor.png" width="270" alt="Writing a note in mdwriter (light theme)">
+  &nbsp;
+  <img src="docs/screenshots/02-dark.png" width="270" alt="The same note in the dark theme">
+</p>
 
-## Features
+## Why this exists
 
-- Live-styled Markdown: headings, emphasis, code, quotes, lists, tasks and links are styled as you type; the Markdown
-  markers stay visible but quiet.
-- Focus mode (dim everything but the current sentence or paragraph), typewriter scrolling, and an optional word count.
-- Preview: a clean rendered view of the note, fully offline.
-- Find and replace.
-- A library of notes in the app, plus linked folders anywhere on the phone (your files stay in your folder).
-- Share a note, open `.md`/`.txt` files from other apps, export all notes as a zip.
-- Light, dark and pure-black themes; three typefaces (Duo, Quattro, Mono); six text sizes.
+For years the best plain-text writing app on Android was [iA Writer](https://ia.net/writer). In September 2024
+Information Architects [stopped developing the Android version](https://ia.net/topics/our-android-app-is-frozen-in-carbonite)
+after Google cut its Google Drive access and demanded yearly paid security audits, and the app
+[was removed from sale](https://ia.net/writer/support/help/writer-classic/ia-writer-legacy-for-android). Existing copies
+are unsupported and "may become less reliable with newer Android versions". (Press coverage:
+[Thurrott](https://www.thurrott.com/mobile/android/310882/ia-writer-abandons-android-citing-google-play-policy-changes).)
 
-## Gestures
+**That is the only reason mdwriter exists.** I wanted that same calm writing experience on a current Android phone,
+so I built a small app in its spirit: plain `.md` files, a typeface made for writing, Markdown you can see but that
+stays out of the way, and nothing else. If iA Writer ever comes back to Android, use it and support them.
 
-- Swipe from the start edge toward the end (left to right in LTR) to open the **library**; swipe the other way to open the
-  **preview**. The swipes never fight text selection, cursor drags or vertical scrolling. Turn them off in Settings
-  ("Swipe to library & preview").
-- Select text to get the formatting pill (bold, italic, link, code, headings, lists, ...).
-- Tap a task box (`- [ ]`) to toggle it.
-- Tap near the top of the screen to bring the two corner buttons back; they fade out while you type.
-- **Back** closes things in this order: keyboard, selection, find bar, library (search, then up a folder, then close),
-  preview, then leaves the app.
+mdwriter is an independent personal project. It is **not affiliated with, endorsed by, or connected to Information
+Architects Inc.** "iA Writer" is their trademark. mdwriter uses their open-source iA Writer Duo, Quattro and Mono
+fonts under the SIL Open Font License (see [Credits](#credits)).
 
-## Keyboard shortcuts
+## What it does
 
-With a hardware keyboard (press **Meta+/** in the app to see the list).
+| | | |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/03-library.png" width="230" alt="Library drawer"> | <img src="docs/screenshots/04-preview.png" width="230" alt="Preview"> | <img src="docs/screenshots/05-pill.png" width="230" alt="Formatting pill on a selection"> |
+| **Library.** Swipe right for all your notes. Search, folders, and folders anywhere on your phone. | **Preview.** Swipe left for a clean rendered page, fully offline. | **Formatting pill.** Select text for bold, italic, headings, links and more. |
+| <img src="docs/screenshots/07-focus.png" width="230" alt="Focus mode on a sentence"> | <img src="docs/screenshots/06-settings.png" width="230" alt="Settings"> | |
+| **Focus mode.** Everything but the current sentence or paragraph fades away. | **Settings.** Theme, typeface, text size, and a few writing options. That is all. | |
 
-| Shortcut | Action |
-|---|---|
-| Ctrl+N | New note |
-| Ctrl+L | Toggle the library |
-| Ctrl+Z / Ctrl+Shift+Z | Undo / Redo |
-| Ctrl+F | Find |
-| Ctrl+B / Ctrl+I | Bold / Italic |
-| Ctrl+K | Link |
-| Ctrl+Shift+C | Code |
-| Ctrl+Shift+X | Strikethrough |
-| Ctrl+0 ... Ctrl+6 | Body text / Heading 1-6 |
-| Ctrl+R | Preview |
+On a tablet or a wide window, the library stays open beside the text, and heading marks hang in the margin:
+
+<p align="center">
+  <img src="docs/screenshots/08-tablet.png" width="720" alt="mdwriter on a tablet-sized screen">
+</p>
+
+- **Markdown styled as you type.** Headings grow, bold gets bold, links and markers turn grey. The text stays plain
+  Markdown you can open anywhere.
+- **No Save button.** Notes save themselves while you write and reopen exactly where you left off.
+- **Typewriter scrolling** keeps the line you are writing in the middle of the screen. **Word count** is optional.
+- **Find and replace**, **task lists** you can tick with a tap, and **undo/redo**.
+- **Your files, your folders.** Keep notes inside the app, or link any folder on the phone (for example
+  `Documents/Notes`) and edit the files right there.
+- **Share** a note, **open** `.md` and `.txt` files from other apps, and **export all notes** as a zip.
+- Light, dark and pure-black themes, three typefaces (Duo, Quattro, Mono) and six text sizes.
+
+## Your notes stay yours
+
+- **No permissions.** The app asks for nothing: no internet, no storage, no contacts.
+- **No network.** It cannot connect anywhere; the preview is rendered on the phone.
+- **No accounts, no analytics, no crash reporting.**
+- **Where notes live:**
+  - Notes in the app's own library are private to the app and are **deleted if you uninstall it**. Android's own
+    backup may copy them (Google backup only when your backup is encrypted, and phone-to-phone transfer).
+  - Notes in a linked folder stay in that folder, like any other file.
+- **Getting your notes out:** Settings > **Export all notes…** saves every note as a `.zip` wherever you choose.
+
+## Using mdwriter
+
+**Gestures**
+- Swipe **right** across the text: open the library. Swipe **left**: open the preview. (You can turn swipes off in
+  Settings.)
+- Select text to get the formatting pill.
+- Tap a task box `- [ ]` to tick it.
+- The two small buttons in the corners fade out while you type; tap near the top to bring them back.
+- **Back** closes, in order: the keyboard, the selection, the find bar, the library, the preview.
+
+**Keyboard shortcuts** (with a hardware keyboard; press **Meta+/** in the app to see them all)
+
+| Shortcut | Action | Shortcut | Action |
+|---|---|---|---|
+| Ctrl+N | New note | Ctrl+B / Ctrl+I | Bold / Italic |
+| Ctrl+L | Show/hide the library | Ctrl+K | Link |
+| Ctrl+R | Preview | Ctrl+Shift+C | Code |
+| Ctrl+F | Find | Ctrl+Shift+X | Strikethrough |
+| Ctrl+Z / Ctrl+Shift+Z | Undo / Redo | Ctrl+1 … Ctrl+6, Ctrl+0 | Heading 1-6, body text |
 
 ## Install on your phone
 
-mdwriter runs on **Android 16 or 17**. You install it from this Mac with one command; no Play Store,
-no account. Your notes are stored inside the app on the phone.
+mdwriter is not on the Play Store. You build it on a Mac and install it on your phone with one command.
+It runs on **Android 16 or 17**.
 
 ### 1. One-time setup on the Mac
 - Install **Android Studio** (it brings the Android SDK, `adb` and a Java runtime). Nothing else is
@@ -79,20 +114,24 @@ Then pick **one** way to connect:
    (this port is different from the pairing port).
    Pairing is remembered; next time just turn Wireless debugging on.
 
-### 3. Install / update
+### 3. Install
 ```sh
 make install        # builds, installs (or updates) and opens mdwriter; your notes are kept
 ```
-Run the same command after every `git pull`: each build gets a higher version number, so it is
-always an in-place update. Several phones connected? `make install DEVICE=<serial>` (see `make devices`).
+Several phones or an emulator connected? `make install DEVICE=<serial>` (see `make devices`).
 You can turn Developer options off again afterwards; the app keeps working.
 
-### 4. Your signing key: back it up now
+### 4. Back up your signing key (important)
 The first `make install` creates `~/.config/mdwriter/release.jks` and
 `~/.config/mdwriter/keystore.properties`. **Every future update must be signed with this key.**
-Copy both files to your password manager or an encrypted backup (`make keystore-info` shows where
-they are and their fingerprint). On a new Mac, put them back in `~/.config/mdwriter/` *before*
-running `make install`.
+Copy the whole `~/.config/mdwriter/` folder to your password manager or an encrypted backup
+(`make keystore-info` shows where the files are and their fingerprint). On a new Mac, put them back
+*before* running `make install`. Without the key you cannot update the app without uninstalling it,
+and uninstalling deletes the notes stored inside the app.
+
+### Updating
+`git pull && make install`. Your notes are kept: every build has a higher version number, so it is an
+in-place update. Never uninstall the app to "reinstall" it.
 
 ### Troubleshooting
 | Message | Meaning / fix |
@@ -107,49 +146,26 @@ running `make install`.
 | Samsung: USB commands ignored | Settings > Security and privacy > **Auto Blocker** blocks USB commands; turn it off while installing. |
 | `offline` device | Unplug/replug, or restart adb: `~/Library/Android/sdk/platform-tools/adb kill-server`. |
 | `no JDK 17-26 found` | Install Android Studio, or `brew install openjdk@21`. Gradle cannot run on Java 27. |
-
-## Updating
-
-`git pull && make install`. Your notes are kept: each build has a higher version number, so it is an in-place update.
-Never uninstall the app to "reinstall" it: that deletes the notes stored inside it.
-
-## Back up your signing key
-
-`make keystore-info` shows where the key is and its fingerprint. Copy the whole `~/.config/mdwriter/` folder to an
-encrypted backup. Without that key you cannot update the app without uninstalling it, which deletes the notes stored
-inside the app.
-
-## Where your notes live
-
-- **In-app library:** app-private storage, invisible to other apps, removed when the app is uninstalled. Auto Backup is on
-  for the notes (`library/`) and settings (`datastore/`): Google backup (only on devices with encrypted backup) and
-  device-to-device transfer may copy them. Recovery copies and the trash are never backed up.
-- **Linked folders:** the files stay in your own folder; mdwriter only edits the notes you open.
-- The debug app `me.gcg.mdwriter.debug` is a separate app with separate notes. `make backup-notes` copies the debug app's
-  notes only; the release app's private files cannot be read over adb.
-
-## Export
-
-- **Export all notes:** Settings (or long-press "On this device" in the library) creates a `.zip` through the system file picker.
-- **Share** a single note from the overflow menu or the preview.
-- **Open** `.md`/`.txt` files from other apps ("Open with" / "Share to" mdwriter).
-
-## Privacy
-
-- No permissions at all (the only entry in `aapt2 dump permissions` is the androidx signature-only receiver permission).
-- No network: there is no INTERNET permission, and the preview renders offline.
-- No accounts, no analytics, no crash reporting.
+| Something else breaks | Run `make logcat` while reproducing it and keep the output; `make doctor` checks the Mac side. |
 
 ## Known limitations
 
-- Per-keystroke latency on very large notes is above the original budgets on the emulator (100k characters: about
-  12 ms median); opening a 300k-character note takes about 3.5 s. See `plans/perf-results.md`.
-- Right-to-left paragraphs in a left-to-right column are offset by the gutter on wide screens.
+- Very long notes (hundreds of pages) are slower: typing in a 100,000-character note is noticeably less snappy, and
+  opening a 300,000-character note takes a few seconds.
+- Right-to-left text (Arabic, Hebrew) works, but on wide screens those paragraphs are offset by the heading margin.
 - Notes over 5 MB open read-only; files over 16 MB and non-text files are refused.
-- Several accessibility, large-screen, RTL and keyboard checks were never run on a real phone; see `plans/QA-matrix.md`
-  (rows marked `user`).
+- It has been tested on the Android emulator. Some things (TalkBack, very large font sizes, split screen,
+  right-to-left layouts, three-button navigation) have not yet been checked on a real phone.
 
-## Development
+## Credits
+
+- Fonts: **iA Writer Duo, Quattro and Mono** by Information Architects Inc., based on IBM Plex, under the
+  SIL Open Font License 1.1. The full licence texts are in `app/src/main/assets/licenses/` and in the app under
+  Settings > About.
+- Markdown parsing for the preview: [commonmark-java](https://github.com/commonmark/commonmark-java) and
+  [autolink-java](https://github.com/robinst/autolink-java).
+
+## For developers
 
 | Command | What it does |
 |---|---|
@@ -157,30 +173,20 @@ inside the app.
 | `make doctor` | Check JDK, SDK, signing key and connected devices. |
 | `make emulator` | Boot the default AVD (`Pixel_10_Pro_XL`) and wait until ready. |
 | `make devices` | List connected devices with their Android version. |
-| `make install-debug DEVICE=<serial>` | Build + install + launch the debug app (separate `.debug` app, its own notes). |
-| `make run-debug` | Launch the installed debug app (no build). |
-| `make install` | Build the release app, install/upgrade it (keeps notes), then launch. |
-| `make run` | Launch the installed release app (no build). |
-| `make test` | Run all JVM unit tests (every module). |
-| `make test-device DEVICE=<serial>` | Run instrumented tests on the connected device/emulator. |
-| `make lint` | Run Android Lint. |
-| `make format` | Auto-format Kotlin + Gradle files (Spotless + ktlint). |
+| `make install-debug DEVICE=<serial>` | Build + install + launch the debug app (`me.gcg.mdwriter.debug`, a separate app with its own notes). |
+| `make run` / `make run-debug` | Launch the installed release / debug app (no build). |
+| `make test` | Run all JVM unit tests. |
+| `make test-device DEVICE=<serial>` | Run instrumented tests on a device or emulator. |
+| `make lint` / `make format` | Android Lint / auto-format (Spotless + ktlint). |
 | `make check` | What CI runs: format check, lint, unit tests, release build (R8). |
-| `make clean` | Delete build outputs (never touches the signing key or the phone). |
-| `make logcat` | Stream the app's logs (release + debug); survives app restarts. |
+| `make logcat` | Stream the app's logs (release + debug). |
 | `make keystore-info` | Show where the release signing key is and its fingerprint. |
-| `make backup-notes` | Copy the debug app's notes to `./notes-backup-<time>/`. |
+| `make backup-notes` | Copy the **debug** app's notes to `./notes-backup-<time>/` (the release app's notes can't be read over adb; use Export). |
 | `make uninstall CONFIRM=yes` | Uninstall the release app. **Deletes every note stored inside it.** |
 
-Requirements: Android Studio (brings the SDK + a JDK). Nothing needs to be on `PATH`. For raw Gradle
-calls: `export JAVA_HOME=$(/usr/libexec/java_home -v 21)` (Gradle 9 cannot run on Homebrew's JDK 27).
+Requirements: Android Studio (brings the SDK + a JDK). For raw Gradle calls:
+`export JAVA_HOME=$(/usr/libexec/java_home -v 21)` (Gradle 9 cannot run on JDK 27).
 
-## Project layout
-
-- `app/` — the Android app: Compose UI, the View-based editor engine, storage, settings.
-- `core/markdown/` — a pure Kotlin/JVM Markdown engine (highlighter, SmartEdit, stats, HTML export).
-- `plans/` — the implementation plan this app is built from.
-
-### Fonts
-
-iA Writer Duo, Quattro, Mono by Information Architects Inc., SIL OFL 1.1 — see `app/src/main/assets/licenses/`.
+Project layout: `app/` is the Android app (Compose UI, a View-based editor engine, storage, settings);
+`core/markdown/` is a pure Kotlin Markdown engine; `plans/` holds the implementation plan, QA matrix and
+performance results; `docs/screenshots/` holds the images above (taken on the Android emulator).
