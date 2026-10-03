@@ -68,7 +68,7 @@
 
         <!-- T18: share-out (ShareOut copies the shared file under cacheDir/exports/ and grants a content:// Uri
              to it). Authority built from applicationId at build time — matches packageName at runtime for both
-             the release app (dev.mdwriter) and the debug app (dev.mdwriter.debug, applicationIdSuffix). -->
+             the release app (me.gcg.mdwriter) and the debug app (me.gcg.mdwriter.debug, applicationIdSuffix). -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.files"

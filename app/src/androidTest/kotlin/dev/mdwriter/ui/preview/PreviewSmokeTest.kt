@@ -33,7 +33,7 @@ import java.util.concurrent.TimeUnit
  * On-device smoke test for the whole locked-down preview pipeline (T16 Acceptance 5): a real [PreviewWebView],
  * added straight to the real [MainActivity]'s window via `addContentView` (not through the Compose overlay — this
  * tests the WebView/asset-loader/link-policy machinery directly, at the level `PreviewOverlay` itself just wires
- * up). Runs on the debug app (`dev.mdwriter.debug`, applicationIdSuffix), which is exactly what 5c checks.
+ * up). Runs on the debug app (`me.gcg.mdwriter.debug`, applicationIdSuffix), which is exactly what 5c checks.
  */
 @RunWith(AndroidJUnit4::class)
 @LargeTest
@@ -200,7 +200,7 @@ class PreviewSmokeTest {
     fun localCssAndFontAreServedOnTheDebugApp() {
         assertThat(
             InstrumentationRegistry.getInstrumentation().targetContext.packageName,
-        ).isEqualTo("dev.mdwriter.debug")
+        ).isEqualTo("me.gcg.mdwriter.debug")
         // Plain body text (not just the H1, which is rendered bold — duo_bold.ttf — by preview.css) so the
         // NORMAL-weight face is the one actually requested.
         renderAndShow("# Hello Preview\n\nSome plain body text.")

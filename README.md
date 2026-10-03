@@ -125,7 +125,7 @@ inside the app.
   for the notes (`library/`) and settings (`datastore/`): Google backup (only on devices with encrypted backup) and
   device-to-device transfer may copy them. Recovery copies and the trash are never backed up.
 - **Linked folders:** the files stay in your own folder; mdwriter only edits the notes you open.
-- The debug app `dev.mdwriter.debug` is a separate app with separate notes. `make backup-notes` copies the debug app's
+- The debug app `me.gcg.mdwriter.debug` is a separate app with separate notes. `make backup-notes` copies the debug app's
   notes only; the release app's private files cannot be read over adb.
 
 ## Export

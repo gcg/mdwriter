@@ -3767,3 +3767,15 @@ The agent never installed anything on your phone. To install it yourself:
 7. Updating later: `git pull && make install`. Notes are kept. Do not run `make uninstall` unless you exported your notes.
 8. Optional: measure on your phone with the protocol in `plans/perf-results.md` ("Run it on your phone").
 9. If something breaks: run `make logcat` while reproducing it, and keep the output.
+
+## Post-handoff — applicationId changed to `me.gcg.mdwriter` — 2026-10-03
+**What changed:** `applicationId` `dev.mdwriter` -> `me.gcg.mdwriter` (debug: `me.gcg.mdwriter.debug`; FileProvider authority
+follows: `me.gcg.mdwriter.files`). The Kotlin namespace/packages stay `dev.mdwriter` (code-only, never user-visible). Updated the
+Makefile default `APP_ID`, `scripts/qa/push-doc.sh`, README, `plans/perf-results.md` commands, a manifest comment and the two tests
+that hard-coded the package name. Earlier STATUS entries and task files still say `dev.mdwriter` (historical).
+**Verification:** `make check` green; release APK badging `package: name='me.gcg.mdwriter'`; device suite on the emulator: 82/84 in
+one run, and the two failures (`SelectionToolbarTest.hiddenWhileSelectionKeepsChanging`,
+`ImeCompositionTest.restyleFrameDuringCompositionKeepsComposingRegion`) pass on re-runs of the same code; they are timing-flaky on a
+freshly booted emulator (the IME test fails intermittently on its own too: it waits for the IMM input restart with a fixed sleep).
+**Notes:** the app was never installed on the phone under the old ID, so nothing migrates. The old `dev.mdwriter.debug` was removed
+from the emulator.
