@@ -36,6 +36,7 @@ import dev.mdwriter.ui.gesture.editorSwipeNav
 import dev.mdwriter.ui.theme.LocalWriterColors
 import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.toolbar.FormatToolbarOverlay
+import kotlin.math.abs
 
 /**
  * The Compose host: [EditorController.scrollView] wrapped in the IME/cutout/nav-bar insets it needs (never the
@@ -154,10 +155,14 @@ internal fun EditorSurface(
     val currentArmedDown by rememberUpdatedState(onSwipeArmedDown)
     val currentSwipe by rememberUpdatedState(onSwipe)
     val currentTopTap by rememberUpdatedState(onTopTap)
+    val currentHandleVisible by rememberUpdatedState(libraryHandleVisible)
+    val currentLibraryHandle by rememberUpdatedState(onLibraryHandle)
     val topPx =
         remember(density, statusBarInsets) {
             { with(density) { WriterDimens.chromeTapZone.toPx() + statusBarInsets.getTop(density) } }
         }
+    val handleW = with(density) { WriterDimens.libraryHandleWidth.toPx() }
+    val handleH = with(density) { WriterDimens.libraryHandleHeight.toPx() }
     Box(
         modifier
             .editorSwipeNav(
@@ -166,7 +171,16 @@ internal fun EditorSurface(
                 onArmedDown = { currentArmedDown() },
                 onSwipe = { currentSwipe(it) },
                 rtl = rtl,
-            ).observeTopTap(topPx = topPx, onTap = { currentTopTap() }),
+            ).observeTap(hit = { p, _ -> p.y <= topPx() }, onTap = { currentTopTap() })
+            .observeTap(
+                hit = { p, size ->
+                    currentHandleVisible &&
+                        (if (rtl) p.x >= size.width - handleW else p.x <= handleW) &&
+                        abs(p.y - size.height / 2f) <= handleH / 2f
+                },
+                consume = true,
+                onTap = { currentLibraryHandle() },
+            ),
     ) {
         AndroidView(
             factory = {

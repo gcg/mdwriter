@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -37,8 +38,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.mdwriter.R
 import dev.mdwriter.markdown.Stats
@@ -108,10 +112,9 @@ fun EditorChrome(
 
 /**
  * Stands in for a library button: a thin grip on the start edge, vertically centred, hinting that a swipe toward
- * the end opens the library. Fades with the chrome (gone while typing; out of composition, so never tappable, while
- * hidden). Composed inside `EditorSurface`, under its swipe detector, so a drag that starts on the grip still
- * swipes. A tap toggles the library too — for when swipes are off in Settings, and for the tablet pane. The target
- * is only [WriterDimens.libraryHandleWidth] wide, so it stays inside the Compact side margin, off the text.
+ * the end opens the library. Fades with the chrome (gone while typing). Draw-only — no pointer input, so every
+ * drag/long-press/scroll in its band still reaches the `EditText`; `EditorSurface` detects a tap on it with
+ * [observeTap] (for when swipes are off in Settings, and for the tablet pane). [onClick] is the TalkBack action.
  */
 @Composable
 fun LibraryHandle(
@@ -131,35 +134,43 @@ fun LibraryHandle(
             Modifier
                 .testTag("libraryHandle")
                 .size(width = WriterDimens.libraryHandleWidth, height = WriterDimens.libraryHandleHeight)
-                .clickable(role = Role.Button, onClick = onClick)
-                .semantics { contentDescription = label },
+                .semantics {
+                    contentDescription = label
+                    role = Role.Button
+                    onClick {
+                        onClick()
+                        true
+                    }
+                },
             contentAlignment = Alignment.Center,
         ) {
             Box(
                 Modifier
                     .size(width = 4.dp, height = 40.dp)
                     .clip(CircleShape)
-                    .background(colors.textSecondary.copy(alpha = 0.5f)),
+                    .background(colors.textSecondary),
             )
         }
     }
 }
 
 /**
- * Observes (never consumes) a tap whose down is within [topPx] of the top of this element; [PointerEventPass.Final]
- * would see the interop View's own consumption first, so [PointerEventPass.Initial] is used instead — the tap
- * still reaches the `EditText` underneath (a real tap there is harmless: it only moves the caret). Slop-bounded
- * (a drag/scroll starting in the strip does not count) and bounded by the platform long-press timeout (a
- * long-press-then-selection does not count either).
+ * Observes a tap whose down lands where [hit] says (given this element's size); [PointerEventPass.Final] would see
+ * the interop View's own consumption first, so [PointerEventPass.Initial] is used instead. Slop-bounded (a
+ * drag/scroll starting in the zone does not count, and reaches the View untouched) and bounded by the platform
+ * long-press timeout (a long-press-then-selection does not count either). With [consume] false the tap still
+ * reaches the `EditText` underneath (harmless: it only moves the caret); with [consume] true the up is consumed, so
+ * the View gets `ACTION_CANCEL` instead of a caret move.
  */
-fun Modifier.observeTopTap(
-    topPx: () -> Float,
+fun Modifier.observeTap(
+    hit: (Offset, IntSize) -> Boolean,
+    consume: Boolean = false,
     onTap: () -> Unit,
 ): Modifier =
     this.pointerInput(Unit) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            if (down.position.y > topPx()) return@awaitEachGesture
+            if (!hit(down.position, size)) return@awaitEachGesture
             val downTime = down.uptimeMillis
             val x0 = down.position.x
             val y0 = down.position.y
@@ -173,6 +184,7 @@ fun Modifier.observeTopTap(
                     if (hypot(dx, dy) < viewConfiguration.touchSlop &&
                         elapsed < viewConfiguration.longPressTimeoutMillis
                     ) {
+                        if (consume) change.consume()
                         onTap()
                     }
                     return@awaitEachGesture

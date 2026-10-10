@@ -127,8 +127,9 @@ The heading **size span starts after the marker run** (`## `), so the `#` marks 
 - **Selection:** `selection` background; handles tinted `accent`.
 - **Chrome:** the editor is 100 % text. One floating glyph button — overflow (`more_vert`, top-end, 48 dp target,
   `textSecondary`) — plus the library grip: a 4 × 40 dp `textSecondary` @ 50 % pill on the start edge, vertically
-  centred, in a 24 dp × 96 dp target (inside the Compact side margin, never over text); it hints at the swipe and a
-  tap toggles the library. Both **fade out (150 ms) on the
+  centred, in a 24 dp × 96 dp zone (the Compact side margin; on wider classes hanging `#` marks can sit under it). It is
+  draw-only: the editor surface observes a tap in that zone (consumed, toggles the library) and lets every drag,
+  long-press and scroll through to the text. Both **fade out (150 ms) on the
   first keystroke** and fade back in (220 ms) when the IME hides, on scroll-up ≥ 24 dp, on a tap in the top 56 dp,
   or after 1.5 s idle with the IME hidden. No app bar, no FAB, no keyboard bar, no bottom bar.
 - A status-bar protection strip (opaque `bg`) sits under the transparent status bar so scrolled text never collides
