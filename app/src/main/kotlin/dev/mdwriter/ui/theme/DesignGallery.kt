@@ -240,7 +240,6 @@ private fun IconsRow(
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        GalleryIcon(R.drawable.ic_left_panel_open, colors)
         GalleryIcon(R.drawable.ic_more_vert, colors)
         GalleryIcon(R.drawable.ic_format_bold, colors)
         GalleryIcon(R.drawable.ic_format_italic, colors)

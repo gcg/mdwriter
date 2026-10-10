@@ -61,10 +61,10 @@ import kotlinx.coroutines.flow.merge
  * [EditorBinding] bound while the controller is alive (unbound in `onDispose`, per 01 §5 — no View ever lives in
  * the ViewModel), and the two lifecycle hooks the session needs.
  *
- * T13 replaces the T12 temporary glyph with the real fading [EditorChrome] (library + overflow glyphs) and the
- * swipe-navigation gesture (wired through [EditorHost]); [onOpenLibrary]/[libraryIcon]/[onNewNote]/[swipeEnabled]/
+ * The fading chrome is [EditorChrome] (overflow glyph + stats) plus the [LibraryHandle] grip and the
+ * swipe-navigation gesture (both wired through [EditorHost]); [onOpenLibrary]/[onNewNote]/[swipeEnabled]/
  * [swipeAccepts]/[onSwipeArmedDown]/[onSwipe] all come from `MdWriterRoot`, which is the only place that knows
- * about the drawer/pane/preview/find/settings state the swipe and the library glyph need to react to.
+ * about the drawer/pane/preview/find/settings state the swipe and the grip need to react to.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -74,7 +74,6 @@ fun EditorScreen(
     settings: Settings,
     onMessage: (String) -> Unit,
     onOpenLibrary: () -> Unit,
-    libraryIcon: Int,
     onNewNote: () -> Unit,
     onSettings: () -> Unit,
     onPreview: () -> Unit,
@@ -215,6 +214,7 @@ fun EditorScreen(
         )
 
     val findFocusToken by vm.findFocusToken.collectAsStateWithLifecycle()
+    val chromeShown = uiState.chromeVisible && !uiState.findOpen
 
     Column(modifier.fillMaxSize()) {
         FindBarHost(
@@ -246,12 +246,11 @@ fun EditorScreen(
                 onOpenPreview = onPreview,
                 onOpenFind = vm::openFind,
                 statusProtectionVisible = !uiState.findOpen,
+                libraryHandleVisible = chromeShown,
             )
             EditorChrome(
-                visible = uiState.chromeVisible && !uiState.findOpen,
+                visible = chromeShown,
                 widthClass = controller.style.widthClass,
-                libraryIcon = libraryIcon,
-                onLibrary = onOpenLibrary,
                 overflowExpanded = overflowExpanded,
                 onOverflow = { overflowExpanded = true },
                 onOverflowDismiss = { overflowExpanded = false },

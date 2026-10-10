@@ -148,13 +148,17 @@ fun MdWriterRoot(
         val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
         val libraryHostState = remember { SnackbarHostState() }
-        val imeVisible = WindowInsets.isImeVisible
+        val imeVisible by rememberUpdatedState(WindowInsets.isImeVisible) // read in LaunchedEffect(drawerState)
         var restoreIme by remember { mutableStateOf(false) }
         val haptics = LocalHapticFeedback.current
 
         // ---- adaptive layout (§G) --------------------------------------------------------------------------------
         val windowSizeClass = currentWindowAdaptiveInfoV2().windowSizeClass
-        val expanded = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
+        // State-backed: the editor's callbacks below are captured once in `remember { movableContentOf }`, and a
+        // fold/unfold/resize never recreates the activity (configChanges), so a plain val would go stale in them.
+        val expanded by rememberUpdatedState(
+            windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND),
+        )
         var paneVisible by rememberSaveable { mutableStateOf(true) }
 
         // ---- T16: the preview WebView (lazy, Activity context, never a ViewModel field — 01 §5) -----------------
@@ -373,7 +377,6 @@ fun MdWriterRoot(
 
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
         val drawerWidth = minOf(WriterDimens.drawerMaxWidth.value, screenWidthDp - WriterDimens.drawerEdgeGap.value).dp
-        val libraryIcon = if (expanded && paneVisible) R.drawable.ic_left_panel_close else R.drawable.ic_left_panel_open
 
         val editor =
             remember {
@@ -384,7 +387,6 @@ fun MdWriterRoot(
                         settings = settings,
                         onMessage = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                         onOpenLibrary = ::toggleLibrary,
-                        libraryIcon = libraryIcon,
                         onNewNote = libraryVm::newNote,
                         onSettings = { editorVm.showSheet(RootSheet.Settings) },
                         onPreview = ::openPreview,

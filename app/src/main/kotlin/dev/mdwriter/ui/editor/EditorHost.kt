@@ -18,9 +18,15 @@ import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInParent
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
@@ -56,6 +62,7 @@ fun EditorHost(
     onOpenPreview: () -> Unit = {},
     onOpenFind: () -> Unit = {},
     statusProtectionVisible: Boolean = true,
+    libraryHandleVisible: Boolean = false,
 ) {
     val colors = LocalWriterColors.current
     val currentOnOpenLibrary by rememberUpdatedState(onOpenLibrary)
@@ -101,6 +108,8 @@ fun EditorHost(
         // published in EditorScrollView viewport coords, so their top-left corners must stay aligned.
         EditorSurface(
             controller,
+            libraryHandleVisible,
+            onOpenLibrary,
             Modifier.fillMaxSize(),
             swipeEnabled = swipeEnabled,
             swipeAccepts = swipeAccepts,
@@ -108,13 +117,14 @@ fun EditorHost(
             onSwipe = onSwipe,
             onTopTap = onTopTap,
         )
-        // T17: hidden while find is open — the find bar itself paints `surface` behind the status bar.
+        // Opaque, same colour as the page: scrolled text simply ends at the status bar instead of ghosting
+        // through a translucent bar. T17: skipped while find is open — the find bar paints `surface` there itself.
         if (statusProtectionVisible) {
             Box(
                 Modifier
                     .fillMaxWidth()
                     .windowInsetsTopHeight(WindowInsets.statusBars)
-                    .background(colors.bg.copy(alpha = WriterDimens.STATUS_PROTECTION_ALPHA)),
+                    .background(colors.bg),
             )
         }
     }
@@ -122,7 +132,7 @@ fun EditorHost(
 
 /**
  * [EditorController.scrollView] plus the selection pill overlay (T09) and (T13) the swipe-navigation +
- * top-tap-to-show-chrome gestures, sharing one coordinate space: the pill's `Box` and the `AndroidView` both fill
+ * top-tap-to-show-chrome gestures and the [LibraryHandle] grip, sharing one coordinate space: the pill's `Box` and the `AndroidView` both fill
  * this same, unpadded parent, so [dev.mdwriter.editor.SelectionState.anchor] (published in `EditorScrollView`
  * viewport coords) lines up with the overlay with no extra math. The overlay is the LAST child (drawn above the
  * `AndroidView`) — the chrome glyphs (`EditorChrome`, composed by `EditorScreen` above this) share this same
@@ -131,6 +141,8 @@ fun EditorHost(
 @Composable
 internal fun EditorSurface(
     controller: EditorController,
+    libraryHandleVisible: Boolean,
+    onOpenLibrary: () -> Unit,
     modifier: Modifier = Modifier,
     swipeEnabled: () -> Boolean = { false },
     swipeAccepts: (SwipeDir) -> Boolean = { true },
@@ -147,6 +159,9 @@ internal fun EditorSurface(
     val currentArmedDown by rememberUpdatedState(onSwipeArmedDown)
     val currentSwipe by rememberUpdatedState(onSwipe)
     val currentTopTap by rememberUpdatedState(onTopTap)
+    val currentOpenLibrary by rememberUpdatedState(onOpenLibrary)
+    // Layout reports the grip's zone (empty once AnimatedVisibility has exited), so the tap zone can't drift from it.
+    var handleBounds by remember { mutableStateOf(Rect.Zero) }
     val topPx =
         remember(density, statusBarInsets) {
             { with(density) { WriterDimens.chromeTapZone.toPx() + statusBarInsets.getTop(density) } }
@@ -159,7 +174,8 @@ internal fun EditorSurface(
                 onArmedDown = { currentArmedDown() },
                 onSwipe = { currentSwipe(it) },
                 rtl = rtl,
-            ).observeTopTap(topPx = topPx, onTap = { currentTopTap() }),
+            ).observeTap(hit = { it.y <= topPx() }, onTap = { currentTopTap() })
+            .observeTap(hit = { handleBounds.contains(it) }, consume = true, onTap = { currentOpenLibrary() }),
     ) {
         AndroidView(
             factory = {
@@ -167,6 +183,11 @@ internal fun EditorSurface(
                 controller.scrollView
             },
             modifier = Modifier.fillMaxSize(),
+        )
+        LibraryHandle(
+            libraryHandleVisible,
+            onOpenLibrary,
+            Modifier.align(Alignment.CenterStart).onPlaced { handleBounds = it.boundsInParent() },
         )
         FormatToolbarOverlay(
             state = selection,

@@ -1,11 +1,11 @@
 package dev.mdwriter.ui.editor
 
-import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -30,12 +30,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.mdwriter.R
@@ -47,19 +52,20 @@ import dev.mdwriter.ui.theme.WriterMotion
 import dev.mdwriter.ui.theme.WriterTheme
 import kotlin.math.hypot
 
+private val chromeEnter = fadeIn(tween(WriterMotion.CHROME_FADE_IN_MS, easing = WriterMotion.chromeFadeInEasing))
+private val chromeExit = fadeOut(tween(WriterMotion.CHROME_FADE_OUT_MS, easing = WriterMotion.chromeFadeOutEasing))
+
 /**
- * The editor's only chrome (02 §5, T13): two faded glyph buttons (library top-start, overflow top-end) that fade
- * out on the first keystroke and back in per [ChromeVisibility]. While [visible] (and [overflowExpanded]) is
- * false, the glyphs are out of composition (`AnimatedVisibility`'s content is only composed while entering/
- * visible/exiting) — so they are never clickable while hidden. [stats] sits OUTSIDE the fade so T15 can render it
- * at reduced alpha while typing instead of hiding it outright.
+ * The editor's top chrome (02 §5, T13): the overflow glyph (top-end) that fades out on the first keystroke and back
+ * in per [ChromeVisibility]. The library has no glyph here — [LibraryHandle] hints at the swipe instead. While
+ * [visible] (and [overflowExpanded]) is false, the glyph is out of composition (`AnimatedVisibility`'s content is
+ * only composed while entering/visible/exiting) — so it is never clickable while hidden. [stats] sits OUTSIDE the
+ * fade so T15 can render it at reduced alpha while typing instead of hiding it outright.
  */
 @Composable
 fun EditorChrome(
     visible: Boolean,
     widthClass: WidthClass,
-    @DrawableRes libraryIcon: Int,
-    onLibrary: () -> Unit,
     overflowExpanded: Boolean,
     onOverflow: () -> Unit,
     onOverflowDismiss: () -> Unit,
@@ -77,26 +83,10 @@ fun EditorChrome(
     ) {
         AnimatedVisibility(
             visible = visible || overflowExpanded,
-            enter = fadeIn(tween(WriterMotion.CHROME_FADE_IN_MS, easing = WriterMotion.chromeFadeInEasing)),
-            exit = fadeOut(tween(WriterMotion.CHROME_FADE_OUT_MS, easing = WriterMotion.chromeFadeOutEasing)),
+            enter = chromeEnter,
+            exit = chromeExit,
         ) {
             Box(Modifier.fillMaxWidth().height(56.dp)) {
-                Box(
-                    Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = inset)
-                        .size(WriterDimens.touchTarget)
-                        .clip(CircleShape)
-                        .clickable(onClick = onLibrary),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(libraryIcon),
-                        contentDescription = stringResource(R.string.cd_library),
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(WriterDimens.icon),
-                    )
-                }
                 Box(
                     Modifier
                         .align(Alignment.CenterEnd)
@@ -123,20 +113,66 @@ fun EditorChrome(
 }
 
 /**
- * Observes (never consumes) a tap whose down is within [topPx] of the top of this element; [PointerEventPass.Final]
- * would see the interop View's own consumption first, so [PointerEventPass.Initial] is used instead — the tap
- * still reaches the `EditText` underneath (a real tap there is harmless: it only moves the caret). Slop-bounded
- * (a drag/scroll starting in the strip does not count) and bounded by the platform long-press timeout (a
- * long-press-then-selection does not count either).
+ * Stands in for a library button: a thin grip on the start edge, vertically centred, hinting that a swipe toward
+ * the end opens the library. Fades with the chrome (gone while typing). Draw-only — no pointer input, so every
+ * drag/long-press/scroll in its band still reaches the `EditText`; `EditorSurface` detects a tap on it with
+ * [observeTap] (for when swipes are off in Settings, and for the tablet pane). [onClick] is the TalkBack action.
  */
-fun Modifier.observeTopTap(
-    topPx: () -> Float,
+@Composable
+fun LibraryHandle(
+    visible: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = WriterTheme.colors
+    val label = stringResource(R.string.cd_library)
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = chromeEnter,
+        exit = chromeExit,
+    ) {
+        Box(
+            Modifier
+                .testTag("libraryHandle")
+                .size(width = WriterDimens.libraryHandleWidth, height = WriterDimens.libraryHandleHeight)
+                .semantics {
+                    contentDescription = label
+                    role = Role.Button
+                    onClick {
+                        onClick()
+                        true
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .size(width = 4.dp, height = 40.dp)
+                    .clip(CircleShape)
+                    .background(colors.textSecondary),
+            )
+        }
+    }
+}
+
+/**
+ * Observes a tap whose down lands where [hit] says; [PointerEventPass.Final] would see
+ * the interop View's own consumption first, so [PointerEventPass.Initial] is used instead. Slop-bounded (a
+ * drag/scroll starting in the zone does not count, and reaches the View untouched) and bounded by the platform
+ * long-press timeout (a long-press-then-selection does not count either). With [consume] false the tap still
+ * reaches the `EditText` underneath (harmless: it only moves the caret); with [consume] true the up is consumed, so
+ * the View gets `ACTION_CANCEL` instead of a caret move.
+ */
+fun Modifier.observeTap(
+    hit: (Offset) -> Boolean,
+    consume: Boolean = false,
     onTap: () -> Unit,
 ): Modifier =
     this.pointerInput(Unit) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            if (down.position.y > topPx()) return@awaitEachGesture
+            if (!hit(down.position)) return@awaitEachGesture
             val downTime = down.uptimeMillis
             val x0 = down.position.x
             val y0 = down.position.y
@@ -150,6 +186,7 @@ fun Modifier.observeTopTap(
                     if (hypot(dx, dy) < viewConfiguration.touchSlop &&
                         elapsed < viewConfiguration.longPressTimeoutMillis
                     ) {
+                        if (consume) change.consume()
                         onTap()
                     }
                     return@awaitEachGesture

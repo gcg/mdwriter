@@ -8,6 +8,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotDisplayed
 import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -198,7 +199,21 @@ class SwipeNavTest {
         composeRule.waitForIdle()
         swipeStartToEnd()
         assertLibraryNotVisible()
-        runBlocking { container.settings.update { it.copy(swipeNavigation = true) } }
+    }
+
+    // ---- edge grip: draw-only, its tap is observed by EditorSurface (works with swipes off) --------------------
+
+    @Test
+    fun tapOnEdgeGripOpensDrawerEvenWithSwipesOff() {
+        val container = (composeRule.activity.application as MdWriterApp).container
+        runBlocking { container.settings.update { it.copy(swipeNavigation = false) } }
+        composeRule.activity.runOnUiThread { editText.clearFocus() }
+        composeRule.waitUntil(5_000) { composeRule.onNodeWithTag("libraryHandle").isDisplayed() }
+        val b = composeRule.onNodeWithTag("libraryHandle").fetchSemanticsNode().boundsInWindow
+        val at = Point(b.center.x.toInt(), b.center.y.toInt())
+        TouchInjector.swipe(at, at, durationMs = 40, steps = 2) // a tap
+        composeRule.waitForIdle()
+        assertLibraryVisible()
     }
 
     // ---- case 9 -----------------------------------------------------------------------------------------------
