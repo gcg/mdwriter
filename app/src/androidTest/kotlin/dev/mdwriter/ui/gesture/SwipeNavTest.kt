@@ -199,7 +199,6 @@ class SwipeNavTest {
         composeRule.waitForIdle()
         swipeStartToEnd()
         assertLibraryNotVisible()
-        runBlocking { container.settings.update { it.copy(swipeNavigation = true) } }
     }
 
     // ---- edge grip: draw-only, its tap is observed by EditorSurface (works with swipes off) --------------------
@@ -215,7 +214,6 @@ class SwipeNavTest {
         TouchInjector.swipe(at, at, durationMs = 40, steps = 2) // a tap
         composeRule.waitForIdle()
         assertLibraryVisible()
-        runBlocking { container.settings.update { it.copy(swipeNavigation = true) } }
     }
 
     // ---- case 9 -----------------------------------------------------------------------------------------------

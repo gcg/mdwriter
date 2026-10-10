@@ -148,7 +148,7 @@ fun MdWriterRoot(
         val scope = rememberCoroutineScope()
         val snackbarHostState = remember { SnackbarHostState() }
         val libraryHostState = remember { SnackbarHostState() }
-        val imeVisible = WindowInsets.isImeVisible
+        val imeVisible by rememberUpdatedState(WindowInsets.isImeVisible) // read in LaunchedEffect(drawerState)
         var restoreIme by remember { mutableStateOf(false) }
         val haptics = LocalHapticFeedback.current
 

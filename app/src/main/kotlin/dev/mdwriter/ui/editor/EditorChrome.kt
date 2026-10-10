@@ -42,7 +42,6 @@ import androidx.compose.ui.semantics.onClick
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.mdwriter.R
 import dev.mdwriter.markdown.Stats
@@ -52,6 +51,9 @@ import dev.mdwriter.ui.theme.WriterDimens
 import dev.mdwriter.ui.theme.WriterMotion
 import dev.mdwriter.ui.theme.WriterTheme
 import kotlin.math.hypot
+
+private val chromeEnter = fadeIn(tween(WriterMotion.CHROME_FADE_IN_MS, easing = WriterMotion.chromeFadeInEasing))
+private val chromeExit = fadeOut(tween(WriterMotion.CHROME_FADE_OUT_MS, easing = WriterMotion.chromeFadeOutEasing))
 
 /**
  * The editor's top chrome (02 §5, T13): the overflow glyph (top-end) that fades out on the first keystroke and back
@@ -81,8 +83,8 @@ fun EditorChrome(
     ) {
         AnimatedVisibility(
             visible = visible || overflowExpanded,
-            enter = fadeIn(tween(WriterMotion.CHROME_FADE_IN_MS, easing = WriterMotion.chromeFadeInEasing)),
-            exit = fadeOut(tween(WriterMotion.CHROME_FADE_OUT_MS, easing = WriterMotion.chromeFadeOutEasing)),
+            enter = chromeEnter,
+            exit = chromeExit,
         ) {
             Box(Modifier.fillMaxWidth().height(56.dp)) {
                 Box(
@@ -127,8 +129,8 @@ fun LibraryHandle(
     AnimatedVisibility(
         visible = visible,
         modifier = modifier,
-        enter = fadeIn(tween(WriterMotion.CHROME_FADE_IN_MS, easing = WriterMotion.chromeFadeInEasing)),
-        exit = fadeOut(tween(WriterMotion.CHROME_FADE_OUT_MS, easing = WriterMotion.chromeFadeOutEasing)),
+        enter = chromeEnter,
+        exit = chromeExit,
     ) {
         Box(
             Modifier
@@ -155,7 +157,7 @@ fun LibraryHandle(
 }
 
 /**
- * Observes a tap whose down lands where [hit] says (given this element's size); [PointerEventPass.Final] would see
+ * Observes a tap whose down lands where [hit] says; [PointerEventPass.Final] would see
  * the interop View's own consumption first, so [PointerEventPass.Initial] is used instead. Slop-bounded (a
  * drag/scroll starting in the zone does not count, and reaches the View untouched) and bounded by the platform
  * long-press timeout (a long-press-then-selection does not count either). With [consume] false the tap still
@@ -163,14 +165,14 @@ fun LibraryHandle(
  * the View gets `ACTION_CANCEL` instead of a caret move.
  */
 fun Modifier.observeTap(
-    hit: (Offset, IntSize) -> Boolean,
+    hit: (Offset) -> Boolean,
     consume: Boolean = false,
     onTap: () -> Unit,
 ): Modifier =
     this.pointerInput(Unit) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-            if (!hit(down.position, size)) return@awaitEachGesture
+            if (!hit(down.position)) return@awaitEachGesture
             val downTime = down.uptimeMillis
             val x0 = down.position.x
             val y0 = down.position.y
