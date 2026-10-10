@@ -62,7 +62,7 @@ import kotlinx.coroutines.flow.merge
  * the ViewModel), and the two lifecycle hooks the session needs.
  *
  * T13 replaces the T12 temporary glyph with the real fading [EditorChrome] (library + overflow glyphs) and the
- * swipe-navigation gesture (wired through [EditorHost]); [onOpenLibrary]/[libraryIcon]/[onNewNote]/[swipeEnabled]/
+ * swipe-navigation gesture (wired through [EditorHost]); [onOpenLibrary]/[onNewNote]/[swipeEnabled]/
  * [swipeAccepts]/[onSwipeArmedDown]/[onSwipe] all come from `MdWriterRoot`, which is the only place that knows
  * about the drawer/pane/preview/find/settings state the swipe and the library glyph need to react to.
  */
@@ -74,7 +74,6 @@ fun EditorScreen(
     settings: Settings,
     onMessage: (String) -> Unit,
     onOpenLibrary: () -> Unit,
-    libraryIcon: Int,
     onNewNote: () -> Unit,
     onSettings: () -> Unit,
     onPreview: () -> Unit,
@@ -246,12 +245,11 @@ fun EditorScreen(
                 onOpenPreview = onPreview,
                 onOpenFind = vm::openFind,
                 statusProtectionVisible = !uiState.findOpen,
+                libraryHandleVisible = uiState.chromeVisible && !uiState.findOpen,
             )
             EditorChrome(
                 visible = uiState.chromeVisible && !uiState.findOpen,
                 widthClass = controller.style.widthClass,
-                libraryIcon = libraryIcon,
-                onLibrary = onOpenLibrary,
                 overflowExpanded = overflowExpanded,
                 onOverflow = { overflowExpanded = true },
                 onOverflowDismiss = { overflowExpanded = false },

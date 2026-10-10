@@ -125,11 +125,13 @@ The heading **size span starts after the marker run** (`## `), so the `#` marks 
 
 - **Caret:** 2 dp wide, 1 dp corner radius, `accent`, full line pitch, platform blink (500 ms).
 - **Selection:** `selection` background; handles tinted `accent`.
-- **Chrome:** the editor is 100 % text. Two floating glyph buttons only — library (`left_panel_open`, top-start) and
-  overflow (`more_vert`, top-end), 48 dp targets, `textSecondary`, over the text. They **fade out (150 ms) on the
+- **Chrome:** the editor is 100 % text. One floating glyph button — overflow (`more_vert`, top-end, 48 dp target,
+  `textSecondary`) — plus the library grip: a 4 × 40 dp `textSecondary` @ 50 % pill on the start edge, vertically
+  centred, in a 24 dp × 96 dp target (inside the Compact side margin, never over text); it hints at the swipe and a
+  tap toggles the library. Both **fade out (150 ms) on the
   first keystroke** and fade back in (220 ms) when the IME hides, on scroll-up ≥ 24 dp, on a tap in the top 56 dp,
   or after 1.5 s idle with the IME hidden. No app bar, no FAB, no keyboard bar, no bottom bar.
-- A status-bar protection strip (`bg` @ 94 %) sits under the transparent status bar so scrolled text never collides
+- A status-bar protection strip (opaque `bg`) sits under the transparent status bar so scrolled text never collides
   with system icons.
 - **Stats (off by default):** one 12 sp `textSecondary` line centred in the glyph row: `1,204 words · 6 min` (reading time = ceil(words / 238)).
   Tap cycles words → characters → sentences → reading time. With a selection it shows selection stats. Stays
@@ -269,7 +271,7 @@ Download Android XML from
 `https://raw.githubusercontent.com/google/material-design-icons/master/symbols/android/<name>/materialsymbolsrounded/<name>_24px.xml`
 into `res/drawable/ic_<name>.xml` and **delete the `android:tint="?attr/colorControlNormal"` line** (that attribute
 only exists with AppCompat; without it AAPT fails). Needed names:
-`left_panel_open, left_panel_close, more_vert, more_horiz, arrow_back, share, undo, redo, search, edit_square,
+`more_vert, more_horiz, arrow_back, share, undo, redo, search, edit_square,
 preview, center_focus_strong, tune, format_bold, format_italic, format_h1, format_h2, format_h3, format_h4, format_h5,
 format_h6, notes, link, code, code_blocks, content_copy, content_paste, content_cut, select_all, format_quote,
 format_list_bulleted, format_list_numbered, checklist, format_strikethrough, ink_highlighter, format_clear, close,

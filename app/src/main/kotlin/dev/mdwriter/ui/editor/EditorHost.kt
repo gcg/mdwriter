@@ -20,6 +20,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -56,6 +57,7 @@ fun EditorHost(
     onOpenPreview: () -> Unit = {},
     onOpenFind: () -> Unit = {},
     statusProtectionVisible: Boolean = true,
+    libraryHandleVisible: Boolean = false,
 ) {
     val colors = LocalWriterColors.current
     val currentOnOpenLibrary by rememberUpdatedState(onOpenLibrary)
@@ -107,14 +109,17 @@ fun EditorHost(
             onSwipeArmedDown = onSwipeArmedDown,
             onSwipe = onSwipe,
             onTopTap = onTopTap,
+            libraryHandleVisible = libraryHandleVisible,
+            onLibraryHandle = onOpenLibrary,
         )
-        // T17: hidden while find is open — the find bar itself paints `surface` behind the status bar.
+        // Opaque, same colour as the page: scrolled text simply ends at the status bar instead of ghosting
+        // through a translucent bar. T17: skipped while find is open — the find bar paints `surface` there itself.
         if (statusProtectionVisible) {
             Box(
                 Modifier
                     .fillMaxWidth()
                     .windowInsetsTopHeight(WindowInsets.statusBars)
-                    .background(colors.bg.copy(alpha = WriterDimens.STATUS_PROTECTION_ALPHA)),
+                    .background(colors.bg),
             )
         }
     }
@@ -137,6 +142,8 @@ internal fun EditorSurface(
     onSwipeArmedDown: () -> Unit = {},
     onSwipe: (SwipeDir) -> Unit = {},
     onTopTap: () -> Unit = {},
+    libraryHandleVisible: Boolean = false,
+    onLibraryHandle: () -> Unit = {},
 ) {
     val selection by controller.selection.collectAsStateWithLifecycle()
     val density = LocalDensity.current
@@ -168,6 +175,7 @@ internal fun EditorSurface(
             },
             modifier = Modifier.fillMaxSize(),
         )
+        LibraryHandle(libraryHandleVisible, onLibraryHandle, Modifier.align(Alignment.CenterStart))
         FormatToolbarOverlay(
             state = selection,
             highlightEnabled = controller.highlightEnabled,

@@ -110,7 +110,8 @@ object WriterDimens {
 
     val chromeTapZone = 56.dp // tap in the top 56 dp shows the glyphs
     val chromeScrollUpThreshold = 24.dp
-    const val STATUS_PROTECTION_ALPHA = 0.94f
+    val libraryHandleWidth = 24.dp // == Compact sideMarginMin: the grip never covers text
+    val libraryHandleHeight = 96.dp
 
     // library drawer (02 §7)
     val drawerMaxWidth = 360.dp

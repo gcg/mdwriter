@@ -1,11 +1,11 @@
 package dev.mdwriter.ui.editor
 
-import androidx.annotation.DrawableRes
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
@@ -36,6 +36,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import dev.mdwriter.R
@@ -48,18 +50,16 @@ import dev.mdwriter.ui.theme.WriterTheme
 import kotlin.math.hypot
 
 /**
- * The editor's only chrome (02 §5, T13): two faded glyph buttons (library top-start, overflow top-end) that fade
- * out on the first keystroke and back in per [ChromeVisibility]. While [visible] (and [overflowExpanded]) is
- * false, the glyphs are out of composition (`AnimatedVisibility`'s content is only composed while entering/
- * visible/exiting) — so they are never clickable while hidden. [stats] sits OUTSIDE the fade so T15 can render it
- * at reduced alpha while typing instead of hiding it outright.
+ * The editor's top chrome (02 §5, T13): the overflow glyph (top-end) that fades out on the first keystroke and back
+ * in per [ChromeVisibility]. The library has no glyph here — [LibraryHandle] hints at the swipe instead. While
+ * [visible] (and [overflowExpanded]) is false, the glyph is out of composition (`AnimatedVisibility`'s content is
+ * only composed while entering/visible/exiting) — so it is never clickable while hidden. [stats] sits OUTSIDE the
+ * fade so T15 can render it at reduced alpha while typing instead of hiding it outright.
  */
 @Composable
 fun EditorChrome(
     visible: Boolean,
     widthClass: WidthClass,
-    @DrawableRes libraryIcon: Int,
-    onLibrary: () -> Unit,
     overflowExpanded: Boolean,
     onOverflow: () -> Unit,
     onOverflowDismiss: () -> Unit,
@@ -83,22 +83,6 @@ fun EditorChrome(
             Box(Modifier.fillMaxWidth().height(56.dp)) {
                 Box(
                     Modifier
-                        .align(Alignment.CenterStart)
-                        .padding(start = inset)
-                        .size(WriterDimens.touchTarget)
-                        .clip(CircleShape)
-                        .clickable(onClick = onLibrary),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        painter = painterResource(libraryIcon),
-                        contentDescription = stringResource(R.string.cd_library),
-                        tint = colors.textSecondary,
-                        modifier = Modifier.size(WriterDimens.icon),
-                    )
-                }
-                Box(
-                    Modifier
                         .align(Alignment.CenterEnd)
                         .padding(end = inset)
                         .size(WriterDimens.touchTarget)
@@ -118,6 +102,45 @@ fun EditorChrome(
         }
         Box(Modifier.align(Alignment.Center)) {
             stats(visible)
+        }
+    }
+}
+
+/**
+ * Stands in for a library button: a thin grip on the start edge, vertically centred, hinting that a swipe toward
+ * the end opens the library. Fades with the chrome (gone while typing; out of composition, so never tappable, while
+ * hidden). Composed inside `EditorSurface`, under its swipe detector, so a drag that starts on the grip still
+ * swipes. A tap toggles the library too — for when swipes are off in Settings, and for the tablet pane. The target
+ * is only [WriterDimens.libraryHandleWidth] wide, so it stays inside the Compact side margin, off the text.
+ */
+@Composable
+fun LibraryHandle(
+    visible: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = WriterTheme.colors
+    val label = stringResource(R.string.cd_library)
+    AnimatedVisibility(
+        visible = visible,
+        modifier = modifier,
+        enter = fadeIn(tween(WriterMotion.CHROME_FADE_IN_MS, easing = WriterMotion.chromeFadeInEasing)),
+        exit = fadeOut(tween(WriterMotion.CHROME_FADE_OUT_MS, easing = WriterMotion.chromeFadeOutEasing)),
+    ) {
+        Box(
+            Modifier
+                .testTag("libraryHandle")
+                .size(width = WriterDimens.libraryHandleWidth, height = WriterDimens.libraryHandleHeight)
+                .clickable(role = Role.Button, onClick = onClick)
+                .semantics { contentDescription = label },
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                Modifier
+                    .size(width = 4.dp, height = 40.dp)
+                    .clip(CircleShape)
+                    .background(colors.textSecondary.copy(alpha = 0.5f)),
+            )
         }
     }
 }

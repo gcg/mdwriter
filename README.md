@@ -69,7 +69,8 @@ On a tablet or a wide window, the library stays open beside the text, and headin
   Settings.)
 - Select text to get the formatting pill.
 - Tap a task box `- [ ]` to tick it.
-- The two small buttons in the corners fade out while you type; tap near the top to bring them back.
+- The thin grip on the left edge is the library (tap it or swipe), and the ⋮ menu sits top right. Both fade out
+  while you type; tap near the top or scroll up to bring them back.
 - **Back** closes, in order: the keyboard, the selection, the find bar, the library, the preview.
 
 **Keyboard shortcuts** (with a hardware keyboard; press **Meta+/** in the app to see them all)

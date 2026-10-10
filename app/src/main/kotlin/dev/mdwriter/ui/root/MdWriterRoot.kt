@@ -373,7 +373,6 @@ fun MdWriterRoot(
 
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
         val drawerWidth = minOf(WriterDimens.drawerMaxWidth.value, screenWidthDp - WriterDimens.drawerEdgeGap.value).dp
-        val libraryIcon = if (expanded && paneVisible) R.drawable.ic_left_panel_close else R.drawable.ic_left_panel_open
 
         val editor =
             remember {
@@ -384,7 +383,6 @@ fun MdWriterRoot(
                         settings = settings,
                         onMessage = { text -> scope.launch { snackbarHostState.showSnackbar(text) } },
                         onOpenLibrary = ::toggleLibrary,
-                        libraryIcon = libraryIcon,
                         onNewNote = libraryVm::newNote,
                         onSettings = { editorVm.showSheet(RootSheet.Settings) },
                         onPreview = ::openPreview,

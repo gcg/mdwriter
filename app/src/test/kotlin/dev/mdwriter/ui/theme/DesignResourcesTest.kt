@@ -43,8 +43,6 @@ class DesignResourcesTest {
 
     private val expectedIconNames =
         listOf(
-            "left_panel_open",
-            "left_panel_close",
             "more_vert",
             "more_horiz",
             "arrow_back",
@@ -158,7 +156,7 @@ class DesignResourcesTest {
 
     // -------------------------------------------------------------- (d) icons
     @Test
-    fun `exactly the 55 spec'd icons are present, tint-free and well-formed`() {
+    fun `exactly the 53 spec'd icons are present, tint-free and well-formed`() {
         val drawableDir = File(resDir, "drawable")
         val actualNames =
             drawableDir
