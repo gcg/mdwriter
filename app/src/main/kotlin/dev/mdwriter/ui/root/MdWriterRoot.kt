@@ -154,7 +154,11 @@ fun MdWriterRoot(
 
         // ---- adaptive layout (§G) --------------------------------------------------------------------------------
         val windowSizeClass = currentWindowAdaptiveInfoV2().windowSizeClass
-        val expanded = windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND)
+        // State-backed: the editor's callbacks below are captured once in `remember { movableContentOf }`, and a
+        // fold/unfold/resize never recreates the activity (configChanges), so a plain val would go stale in them.
+        val expanded by rememberUpdatedState(
+            windowSizeClass.isWidthAtLeastBreakpoint(WindowSizeClass.WIDTH_DP_EXPANDED_LOWER_BOUND),
+        )
         var paneVisible by rememberSaveable { mutableStateOf(true) }
 
         // ---- T16: the preview WebView (lazy, Activity context, never a ViewModel field — 01 §5) -----------------

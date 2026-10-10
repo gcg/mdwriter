@@ -127,7 +127,7 @@ fun EditorHost(
 
 /**
  * [EditorController.scrollView] plus the selection pill overlay (T09) and (T13) the swipe-navigation +
- * top-tap-to-show-chrome gestures, sharing one coordinate space: the pill's `Box` and the `AndroidView` both fill
+ * top-tap-to-show-chrome gestures and the [LibraryHandle] grip, sharing one coordinate space: the pill's `Box` and the `AndroidView` both fill
  * this same, unpadded parent, so [dev.mdwriter.editor.SelectionState.anchor] (published in `EditorScrollView`
  * viewport coords) lines up with the overlay with no extra math. The overlay is the LAST child (drawn above the
  * `AndroidView`) — the chrome glyphs (`EditorChrome`, composed by `EditorScreen` above this) share this same
