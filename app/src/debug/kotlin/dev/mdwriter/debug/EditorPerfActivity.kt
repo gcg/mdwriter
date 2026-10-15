@@ -44,6 +44,10 @@ class EditorPerfActivity : ComponentActivity() {
     lateinit var controller: EditorController
         private set
 
+    /** True once the document is installed and the post-install layout (scroll/focus below) has run. */
+    var installed = false
+        private set
+
     private var extendSelection = false
     private val main = Handler(Looper.getMainLooper())
     private val fmThread = HandlerThread("mdperf-fm").apply { start() }
@@ -105,6 +109,7 @@ class EditorPerfActivity : ComponentActivity() {
                 controller.scrollView.scrollTo(0, contentHeight / 2)
                 controller.requestFocus()
                 controller.hideIme()
+                installed = true
             }
             if (perfEdits > 0) {
                 main.postDelayed({ runHarness(label, perfEdits, vary, verifyLayout) }, WARMUP_MS)

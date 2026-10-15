@@ -43,7 +43,7 @@ internal object EditorTestHost {
         val scenario = ActivityScenario.launch<EditorPerfActivity>(intent)
         waitUntil(10_000) {
             var ready = false
-            scenario.onActivity { ready = it.controller.editText.layout != null }
+            scenario.onActivity { ready = it.installed }
             ready
         }
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()

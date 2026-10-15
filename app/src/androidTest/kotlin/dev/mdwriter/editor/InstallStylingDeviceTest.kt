@@ -61,7 +61,8 @@ class InstallStylingDeviceTest {
                 var ready = false
                 scenario.onActivity { activity ->
                     val sv = findScrollView(activity.window.decorView)
-                    if (sv != null && sv.editText.layout != null && sv.editText.length() > 0) {
+                    // Spans land incrementally after install: wait for the restyler too, not just a first layout.
+                    if (sv != null && activity.installed && activity.controller.isRestyleIdle) {
                         scrollView = sv
                         ready = true
                     }
