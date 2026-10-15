@@ -105,4 +105,28 @@ class EditorScrollDeviceTest {
             }
         }
     }
+
+    /** Typing on the last line, already on screen, must not scroll: TextView's caret reveal counts the 50 %
+     * bottom room as part of the last line's rect, which used to yank the caret line up under the status bar. */
+    @Test
+    fun typingOnVisibleLastLineDoesNotScroll() {
+        val text = (1..40).joinToString("\n") { "line $it" }
+        EditorTestHost.launch(text).use { scenario ->
+            val ic = EditorTestHost.ic(scenario)
+            var before = 0
+            scenario.onActivity { activity ->
+                val sv = activity.controller.scrollView
+                val et = sv.editText
+                val lastTop = et.layout!!.getLineTop(et.layout!!.lineCount - 1)
+                // Last line at 80 % of the viewport: visible, but less than the bottom room above the bottom edge.
+                sv.scrollTo(0, et.top + et.totalPaddingTop + lastTop - (0.8f * sv.height).roundToInt())
+                before = sv.scrollY
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            scenario.onActivity { ic.commitText("x", 1) }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            Thread.sleep(400) // let any smooth scroll finish
+            scenario.onActivity { assertThat(it.controller.scrollView.scrollY).isEqualTo(before) }
+        }
+    }
 }

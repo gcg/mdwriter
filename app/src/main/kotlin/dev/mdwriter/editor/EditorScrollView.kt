@@ -5,6 +5,7 @@ import android.content.Context
 import android.graphics.Rect
 import android.util.TypedValue
 import android.view.MotionEvent
+import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowInsets
 import android.view.WindowManager
@@ -195,6 +196,21 @@ class EditorScrollView(
         // IME opened: keep the caret above it. Padding/geometry are untouched here (rule 2) — imePadding() on
         // the Compose host shrinks this ScrollView's height instead.
         if (h < oldh && editText.isFocused) post { editText.bringPointIntoView(editText.selectionEnd) }
+    }
+
+    /** TextView's caret reveal grows the LAST line's rect by the whole bottom padding (`getInterestingRect`). Ours
+     * is the 50 % scroll room, so typing at the end yanked the caret line to the top of the screen. Clip it to the
+     * text; every reveal (typing, IME open, find) lands here whichever `requestRectangleOnScreen` overload ran. */
+    override fun requestChildRectangleOnScreen(
+        child: View,
+        rectangle: Rect,
+        immediate: Boolean,
+    ): Boolean {
+        if (child === editText) {
+            val textBottom = editText.totalPaddingTop + (editText.layout?.height ?: 0)
+            if (rectangle.bottom > textBottom) rectangle.bottom = maxOf(rectangle.top, textBottom)
+        }
+        return super.requestChildRectangleOnScreen(child, rectangle, immediate)
     }
 
     /** Layout (text) y -> y inside this ScrollView's visible area. */
