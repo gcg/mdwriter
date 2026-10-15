@@ -2,7 +2,6 @@ package dev.mdwriter.editor
 
 import android.graphics.Rect
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import com.google.common.truth.Truth.assertThat
 import dev.mdwriter.markdown.TextEdit
 import kotlinx.coroutines.runBlocking
@@ -118,17 +117,18 @@ class FindDeviceTest {
         val text = lines.joinToString("\n")
         val scenario = EditorTestHost.launch(text = text, selection = 0)
         scenario.onActivity { activity -> runBlocking { activity.controller.find("UNIQUEWORD", true) } }
-        InstrumentationRegistry.getInstrumentation().waitForIdleSync() // let bringPointIntoView's scroll land
-        scenario.onActivity { activity ->
-            val c = activity.controller
-            assertThat(c.scrollView.scrollY).isGreaterThan(0)
-            val layout = checkNotNull(c.editText.layout)
-            val matchLine = layout.getLineForOffset(text.indexOf("UNIQUEWORD"))
-            val lineTop = layout.getLineTop(matchLine)
-            val viewport = Rect()
-            c.scrollView.childViewport(viewport)
-            assertThat(lineTop).isAtLeast(viewport.top)
-            assertThat(lineTop).isAtMost(viewport.bottom)
+        // The reveal is an animated ScrollView scroll: its first frame can land well after waitForIdleSync() returns
+        // (seen on the emulator: ~130 ms later), so wait for the match line to actually reach the viewport.
+        EditorTestHost.waitUntil {
+            var revealed = false
+            scenario.onActivity { activity ->
+                val c = activity.controller
+                val layout = checkNotNull(c.editText.layout)
+                val lineTop = layout.getLineTop(layout.getLineForOffset(text.indexOf("UNIQUEWORD")))
+                val viewport = c.scrollView.childViewport(Rect())
+                revealed = c.scrollView.scrollY > 0 && lineTop in viewport.top..viewport.bottom
+            }
+            revealed
         }
     }
 
